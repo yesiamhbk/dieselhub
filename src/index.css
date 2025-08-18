@@ -1,0 +1,5 @@
+@import "tailwindcss";
+
+/* указываем файлы, которые Tailwind должен сканировать (v4) */
+@source "../index.html";
+@source "./**/*.{js,jsx,ts,tsx}";
