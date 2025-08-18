@@ -1,12 +1,14 @@
 // src/App.jsx
 import React, { useEffect, useMemo, useState } from "react";
 
+/** БАЗОВЫЙ URL API (пусто в dev, на проде через VITE_API_BASE) */
+const API = import.meta.env.VITE_API_BASE || "";
+
 /* ===================== Утиліти ===================== */
 
 function classNames(...c) {
   return c.filter(Boolean).join(" ");
 }
-
 const hasImages = (arr) => Array.isArray(arr) && arr.length > 0;
 
 // Список типів — обовʼязково є "Клапан"
@@ -16,8 +18,7 @@ const AVAILABILITIES = ["В наявності", "Під замовлення"];
 
 function ExpandableList({ items = [], max = 3 }) {
   const [open, setOpen] = useState(false);
-  if (!items || items.length === 0)
-    return <span className="text-neutral-400">—</span>;
+  if (!items || items.length === 0) return <span className="text-neutral-400">—</span>;
   const shown = open ? items : items.slice(0, max);
   const hidden = Math.max(0, items.length - max);
   return (
@@ -47,28 +48,27 @@ function formatEngine(v) {
   return Number.isFinite(n) ? `${n.toFixed(1)} л` : "—";
 }
 
-/* ====== Телефон UA (без дужок) ====== */
-/** Беремо лише цифри. Прибираємо префікси 380/38/0 на початку, щоб
- *  при стиранні '0' після +380 НЕ зʼявлялось зайве '38'. */
+/* ====== Телефон UA: маска + акуратне редагування ====== */
+/** Забираємо все, лишаємо цифри; обрізаємо 380/0 на початку; рівно 9 цифр */
 function normalizeUAPhoneInput(input) {
   let d = String(input || "").replace(/\D+/g, "");
   if (d.startsWith("380")) d = d.slice(3);
-  else if (d.startsWith("38")) d = d.slice(2);   // ключевой фикс
-  else if (d.startsWith("0")) d = d.slice(1);
+  if (d.startsWith("0")) d = d.slice(1);
   return d.slice(0, 9);
 }
-/** Відображення: +380 XX XXX XX XX (тільки пробіли) */
-function formatUAPhone(digits) {
-  const a = (digits || "").slice(0, 2);
-  const b = (digits || "").slice(2, 5);
-  const c = (digits || "").slice(5, 7);
-  const d2 = (digits || "").slice(7, 9);
-  let out = "+380";
-  if (a) out += ` ${a}`;
-  if (b) out += ` ${b}`;
-  if (c) out += ` ${c}`;
-  if (d2) out += ` ${d2}`;
-  return out;
+/** Рендер +380 XX XXX XX XX (тільки пробіли, без дужок) */
+function formatUAPhone(d) {
+  const s = (d || "").padEnd(9, "");
+  const a = s.slice(0, 2);
+  const b = s.slice(2, 5);
+  const c = s.slice(5, 7);
+  const e = s.slice(7, 9);
+  let out = `+380`;
+  if (a.trim()) out += ` ${a}`;
+  if (b.trim()) out += ` ${b}`;
+  if (c.trim()) out += ` ${c}`;
+  if (e.trim()) out += ` ${e}`;
+  return out.trim();
 }
 
 /* ===================== Додаток ===================== */
@@ -92,7 +92,7 @@ export default function App() {
   const [products, setProducts] = useState([]);
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/products")
+    fetch(`${API}/api/products`)
       .then((r) => (r.ok ? r.json() : []))
       .then((d) => {
         if (!cancelled) setProducts(Array.isArray(d) ? d : []);
@@ -111,8 +111,9 @@ export default function App() {
   );
   const liters = useMemo(
     () =>
-      Array.from(new Set(products.map((p) => p.engine).filter((x) => x != null)))
-        .sort((a, b) => a - b),
+      Array.from(new Set(products.map((p) => p.engine).filter((x) => x != null))).sort(
+        (a, b) => a - b
+      ),
     [products]
   );
 
@@ -121,11 +122,9 @@ export default function App() {
     const has = (str, q) => String(str || "").toLowerCase().includes(q);
     return products.filter((p) => {
       if (filters.brand.size && !filters.brand.has(p.manufacturer)) return false;
-      if (filters.condition.size && !filters.condition.has(p.condition))
-        return false;
+      if (filters.condition.size && !filters.condition.has(p.condition)) return false;
       if (filters.type.size && !filters.type.has(p.type)) return false;
-      if (filters.availability.size && !filters.availability.has(p.availability))
-        return false;
+      if (filters.availability.size && !filters.availability.has(p.availability)) return false;
       if (filters.engine.size && !filters.engine.has(p.engine)) return false;
 
       if (filters.number) {
@@ -134,8 +133,7 @@ export default function App() {
         if (!match) return false;
       }
       if (filters.oem && !has(p.oem, filters.oem)) return false;
-      if (filters.cross && !(p.cross || []).some((c) => has(c, filters.cross)))
-        return false;
+      if (filters.cross && !(p.cross || []).some((c) => has(c, filters.cross))) return false;
       if (filters.carModel && !(p.models || []).some((m) => has(m, filters.carModel)))
         return false;
 
@@ -184,27 +182,24 @@ export default function App() {
 
   const cartItems = cart.map((ci) => {
     const p = products.find((pp) => pp.id === ci.id);
-    if (!p) return { id: ci.id, number: "Товар", oem: "", price: 0, qty: ci.qty };
+    if (!p) return { id: ci.id, number: "Товар", oem: "", price: 0, qty: ci.qty, images: [] };
     return { ...p, qty: ci.qty };
   });
-  const cartTotal = cartItems.reduce(
-    (s, i) => s + (i.price || 0) * Math.max(0, i.qty),
-    0
-  );
+  const cartTotal = cartItems.reduce((s, i) => s + (i.price || 0) * Math.max(0, i.qty), 0);
 
   function addToCart(p) {
     setCart((prev) => {
       const ex = prev.find((i) => i.id === p.id);
       if (ex)
         return prev.map((i) =>
-          i.id === p.id ? { ...i, qty: Math.min((i.qty || 0) + 1, (p.qty || 99)) } : i
+          i.id === p.id ? { ...i, qty: Math.min((i.qty || 0) + 1, p.qty || 99) } : i
         );
       return [...prev, { id: p.id, qty: 1 }];
     });
     setCartOpen(true);
   }
 
-  // Дозволяємо тимчасово ставити 0, але при '05' робимо 5
+  // Дозволяємо тимчасово 0; при вводі «05» стане «5»
   function updateQty(id, val) {
     let v = String(val);
     if (v === "") {
@@ -234,24 +229,19 @@ export default function App() {
   const [orderPlaced, setOrderPlaced] = useState(false);
   const [order, setOrder] = useState({
     name: "",
-    phone: "", // тільки 9 цифр
+    phone: "", // лише 9 «національних» цифр
     delivery: "Нова пошта",
+    agree: false,
   });
-  const [agree, setAgree] = useState(false);
 
   // Валідація
-  const nameValid =
-    /^[A-Za-zА-Яа-яЁёІіЇїЄєҐґ'’ -]{1,30}$/.test(order.name || "");
+  const nameValid = /^[A-Za-zА-Яа-яЁёІіЇїЄєҐґ'’ -]{1,30}$/.test(order.name || "");
   const phoneValid = (order.phone || "").length === 9;
-  const canSubmit =
-    nameValid &&
-    phoneValid &&
-    agree &&
-    cartItems.length > 0 &&
-    !cartItems.some((i) => i.qty <= 0);
+  const agreeValid = !!order.agree;
 
   async function placeOrder() {
-    if (!canSubmit) return;
+    if (!nameValid || !phoneValid || !agreeValid) return;
+    if (cartItems.length === 0 || cartItems.some((i) => i.qty <= 0)) return;
 
     const payload = {
       name: order.name.trim(),
@@ -270,7 +260,7 @@ export default function App() {
     };
 
     try {
-      const r = await fetch("/api/order", {
+      const r = await fetch(`${API}/api/order`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -284,8 +274,7 @@ export default function App() {
   }
 
   function openCheckout() {
-    setOrder({ name: "", phone: "", delivery: "Нова пошта" });
-    setAgree(false);
+    setOrder({ name: "", phone: "", delivery: "Нова пошта", agree: false });
     setOrderPlaced(false);
     setCheckoutOpen(true);
   }
@@ -294,13 +283,13 @@ export default function App() {
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100">
       {/* Header */}
-      <header className="sticky top-0 z-30 bg-neutral-950/60 backdrop-blur-md border-b border-neutral-800">
+      <header className="sticky top-0 z-40 bg-neutral-950/60 backdrop-blur-md border-b border-neutral-800">
         <div className="mx-auto max-w-7xl px-4 py-3 flex items-center gap-4">
           <div className="flex items-center gap-2">
             <img src="/dh-logo.png" alt="Diesel Hub" className="h-8 w-8 object-contain" />
             <div className="font-bold tracking-tight">Diesel Hub</div>
           </div>
-          <div className="hidden md:flex flex-1" />
+
           <div className="flex-1 max-w-xl">
             <input
               value={query}
@@ -309,7 +298,8 @@ export default function App() {
               className="w-full rounded-xl bg-neutral-900 border border-neutral-800 px-4 py-2 outline-none focus:border-yellow-400"
             />
           </div>
-          <div className="ml-3">
+
+          <div className="ml-auto">
             <button
               onClick={() => setCartOpen((v) => !v)}
               className="relative rounded-xl border border-neutral-700 px-3 py-2 hover:border-yellow-400"
@@ -323,22 +313,16 @@ export default function App() {
             </button>
           </div>
         </div>
+
         <div className="border-t border-neutral-800 bg-neutral-900 text-neutral-200">
           <div className="mx-auto max-w-7xl px-4 py-2 text-center text-sm">
             Усі форсунки й ТНВД —{" "}
-            <a
-              href="/#warranty"
-              className="text-yellow-400 font-semibold underline-offset-4 hover:underline"
-              title="Умови гарантії"
-            >
-              гарантія 6 місяців
-            </a>{" "}
-            · перевірені
+            <span className="text-yellow-400 font-semibold">гарантія 6 місяців</span> · перевірені
           </div>
         </div>
       </header>
 
-      {/* Hero */}
+      {/* Hero / Плашка */}
       <section className="border-b border-neutral-800">
         <div className="mx-auto max-w-7xl px-4 py-8 md:py-10 grid md:grid-cols-2 gap-6 items-center relative">
           <div>
@@ -346,7 +330,7 @@ export default function App() {
               href="https://kropdieselhub.com"
               target="_blank"
               rel="noopener noreferrer"
-              className="absolute right-4 top-6 md:top-8 rounded-xl border border-yellow-500/60 bg-yellow-400 text-neutral-950 px-3 py-2 text-sm font-semibold hover:brightness-95 whitespace-nowrap"
+              className="absolute right-4 top-2 md:top-4 rounded-xl border border-yellow-500/60 bg-yellow-400 text-neutral-950 px-3 py-2 text-sm font-semibold hover:brightness-95 whitespace-nowrap"
             >
               Наше СТО
             </a>
@@ -355,16 +339,15 @@ export default function App() {
               <span className="block text-yellow-400">в наявності та з гарантією</span>
             </h1>
             <p className="mt-3 text-neutral-300">
-              Швидкий пошук за OEM і крос-номерами. Чесний стан: нове / відновлене.
-              Відправка по Україні.
+              Швидкий пошук за OEM і крос-номерами. Чесний стан: нове / відновлене. Відправка по
+              Україні.
             </p>
           </div>
           <div className="md:justify-self-end">
             <div className="rounded-2xl border border-neutral-800 bg-gradient-to-br from-neutral-900 to-neutral-950 p-4 mt-3">
               <ul className="text-sm text-neutral-300 space-y-2 list-disc pl-5">
                 <li>
-                  Фільтр за типом, виробником, станом,{" "}
-                  <span className="text-neutral-100">наявністю</span>
+                  Фільтр за типом, виробником, станом, <span className="text-neutral-100">наявністю</span>
                 </li>
                 <li>
                   Картка з номером, OEM, кросами,{" "}
@@ -384,6 +367,7 @@ export default function App() {
         <aside className="md:col-span-3 space-y-6">
           <div className="text-xs uppercase tracking-wide text-neutral-400">Фільтр</div>
 
+          {/* Поля пошуку */}
           <div className="rounded-2xl border border-neutral-800 p-4 space-y-3">
             <label className="block">
               <div className="text-sm mb-1">Номер деталі</div>
@@ -413,9 +397,7 @@ export default function App() {
               <div className="text-sm mb-1">Модель авто</div>
               <input
                 value={filters.carModel}
-                onChange={(e) =>
-                  setFilters((f) => ({ ...f, carModel: e.target.value }))
-                }
+                onChange={(e) => setFilters((f) => ({ ...f, carModel: e.target.value }))}
                 placeholder="Напр.: Sprinter W906, Passat B7"
                 className="w-full rounded-lg bg-neutral-900 border border-neutral-800 px-3 py-2 text-sm outline-none focus:border-yellow-400"
               />
@@ -430,7 +412,10 @@ export default function App() {
                 <button
                   key={t}
                   onClick={() =>
-                    setFilters((f) => ({ ...f, type: toggleSet(f.type, t) }))
+                    setFilters((f) => ({
+                      ...f,
+                      type: toggleSet(f.type, t),
+                    }))
                   }
                   className={classNames(
                     "px-3 py-1 rounded-full border text-sm",
@@ -478,9 +463,7 @@ export default function App() {
               {brands.map((b) => (
                 <button
                   key={b}
-                  onClick={() =>
-                    setFilters((f) => ({ ...f, brand: toggleSet(f.brand, b) }))
-                  }
+                  onClick={() => setFilters((f) => ({ ...f, brand: toggleSet(f.brand, b) }))}
                   className={classNames(
                     "px-3 py-1 rounded-full border text-sm",
                     filters.brand.has(b)
@@ -502,7 +485,10 @@ export default function App() {
                 <button
                   key={c}
                   onClick={() =>
-                    setFilters((f) => ({ ...f, condition: toggleSet(f.condition, c) }))
+                    setFilters((f) => ({
+                      ...f,
+                      condition: toggleSet(f.condition, c),
+                    }))
                   }
                   className={classNames(
                     "px-3 py-1 rounded-full border text-sm",
@@ -524,9 +510,7 @@ export default function App() {
               {liters.map((l) => (
                 <button
                   key={l}
-                  onClick={() =>
-                    setFilters((f) => ({ ...f, engine: toggleSet(f.engine, l) }))
-                  }
+                  onClick={() => setFilters((f) => ({ ...f, engine: toggleSet(f.engine, l) }))}
                   className={classNames(
                     "px-3 py-1 rounded-full border text-sm",
                     filters.engine.has(l)
@@ -545,8 +529,7 @@ export default function App() {
         <section className="md:col-span-9">
           <div className="flex items-center justify-between mb-4">
             <div className="text-sm text-neutral-400">
-              Знайдено:{" "}
-              <span className="text-neutral-200 font-semibold">{filtered.length}</span>
+              Знайдено: <span className="text-neutral-200 font-semibold">{filtered.length}</span>
             </div>
           </div>
 
@@ -557,19 +540,11 @@ export default function App() {
                 onClick={() => openProduct(p)}
                 className="group rounded-2xl border border-neutral-800 overflow-hidden bg-neutral-900 cursor-pointer hover:border-yellow-400/70 transition-colors"
               >
-                <div className="aspect-video bg-neutral-800 overflow-hidden">
+                <div className="aspect-video bg-neutral-800 grid place-items-center text-neutral-400 overflow-hidden">
                   {hasImages(p.images) ? (
-                    <img
-                      src={p.images[0]}
-                      alt={p.number}
-                      className="w-full h-full object-cover"
-                      loading="lazy"
-                      onError={(e) => (e.currentTarget.style.display = "none")}
-                    />
+                    <img src={p.images[0]} alt="" className="w-full h-full object-cover" loading="lazy" />
                   ) : (
-                    <div className="w-full h-full grid place-items-center text-neutral-400">
-                      Фото
-                    </div>
+                    "Фото"
                   )}
                 </div>
                 <div className="p-4 space-y-2">
@@ -586,7 +561,7 @@ export default function App() {
                     )}
                   </div>
                   <div className="text-sm text-neutral-300">
-                    OEM: <span className="text-neutral-100">{p.oem}</span>
+                    OEM: <span className="text-neutral-100">{p.oem || "—"}</span>
                   </div>
                   <div className="text-sm text-neutral-300">
                     Крос: <ExpandableList items={p.cross || []} max={3} />
@@ -595,8 +570,7 @@ export default function App() {
                     Тип: <span className="text-neutral-100">{p.type}</span>
                   </div>
                   <div className="text-sm text-neutral-300">
-                    Об'єм:{" "}
-                    <span className="text-neutral-100">{formatEngine(p.engine)}</span>
+                    Об'єм: <span className="text-neutral-100">{formatEngine(p.engine)}</span>
                   </div>
                   <div className="text-xs text-neutral-400">
                     {p.manufacturer} · {p.condition}
@@ -622,6 +596,7 @@ export default function App() {
 
           {/* Пагінація + Показати ще */}
           <div className="mt-6 flex items-center justify-between">
+            {/* Пагінація */}
             <div className="flex items-center gap-2">
               <button
                 onClick={() => {
@@ -680,6 +655,7 @@ export default function App() {
               </button>
             </div>
 
+            {/* Показати ще */}
             <div>
               <button
                 onClick={() => {
@@ -703,52 +679,45 @@ export default function App() {
 
       {/* Product Modal */}
       {productOpen && (
-        <div className="fixed inset-0 z-50">
-          <div
-            className="absolute inset-0 bg-black/60"
-            onClick={() => setProductOpen(null)}
-          />
+        <div className="fixed inset-0 z-[60]">
+          <div className="absolute inset-0 bg-black/60" onClick={() => setProductOpen(null)} />
           <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-4xl rounded-2xl border border-neutral-800 bg-neutral-950 p-5">
             <div className="flex items-start gap-6 flex-col md:flex-row">
               {/* Gallery */}
               <div className="md:w-1/2 w-full">
-                <div className="aspect-video rounded-xl bg-neutral-900 overflow-hidden mb-3">
+                <div className="aspect-video rounded-xl bg-neutral-900 grid place-items-center text-neutral-400 mb-3 overflow-hidden">
                   {hasImages(productOpen.images) ? (
                     <img
-                      src={productOpen.images[activeImg] || productOpen.images[0]}
-                      alt={productOpen.number}
+                      src={productOpen.images[activeImg]}
+                      alt=""
                       className="w-full h-full object-cover"
-                      onError={(e) => (e.currentTarget.style.display = "none")}
                     />
                   ) : (
-                    <div className="w-full h-full grid place-items-center text-neutral-400">
-                      Фото
-                    </div>
+                    <>Фото {activeImg + 1}</>
                   )}
                 </div>
                 <div className="grid grid-cols-4 gap-2">
-                  {(hasImages(productOpen.images) ? productOpen.images : []).map(
-                    (url, idx) => (
-                      <button
-                        key={url + idx}
-                        onClick={() => setActiveImg(idx)}
-                        className={classNames(
-                          "h-16 rounded-lg overflow-hidden border",
-                          idx === activeImg
-                            ? "border-yellow-500/60"
-                            : "border-neutral-800 hover:border-neutral-700"
-                        )}
-                        title={`Фото ${idx + 1}`}
-                      >
-                        <img
-                          src={url}
-                          alt={`Фото ${idx + 1}`}
-                          className="w-full h-full object-cover"
-                          onError={(e) => (e.currentTarget.style.display = "none")}
-                        />
-                      </button>
-                    )
-                  )}
+                  {(productOpen.images && productOpen.images.length
+                    ? productOpen.images
+                    : ["1", "2", "3"]
+                  ).map((img, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => setActiveImg(idx)}
+                      className={classNames(
+                        "h-16 rounded-lg grid place-items-center text-xs overflow-hidden",
+                        idx === activeImg
+                          ? "bg-yellow-500/20 border border-yellow-500/50"
+                          : "bg-neutral-900 border border-neutral-800 hover:border-neutral-700"
+                      )}
+                    >
+                      {hasImages(productOpen.images) ? (
+                        <img src={img} alt="" className="w-full h-full object-cover" />
+                      ) : (
+                        <>Фото {idx + 1}</>
+                      )}
+                    </button>
+                  ))}
                 </div>
               </div>
 
@@ -764,7 +733,7 @@ export default function App() {
                   </button>
                 </div>
                 <div className="text-sm text-neutral-300 mt-1">
-                  OEM: <span className="text-neutral-100">{productOpen.oem}</span>
+                  OEM: <span className="text-neutral-100">{productOpen.oem || "—"}</span>
                 </div>
                 <div className="text-sm text-neutral-300">
                   Крос: <ExpandableList items={productOpen.cross || []} max={3} />
@@ -773,8 +742,7 @@ export default function App() {
                   Тип: <span className="text-neutral-100">{productOpen.type}</span>
                 </div>
                 <div className="text-sm text-neutral-300">
-                  Об'єм двигуна:{" "}
-                  <span className="text-neutral-100">{formatEngine(productOpen.engine)}</span>
+                  Об'єм двигуна: <span className="text-neutral-100">{formatEngine(productOpen.engine)}</span>
                 </div>
                 <div className="text-sm text-neutral-300">
                   Моделі авто: <ExpandableList items={productOpen.models || []} max={3} />
@@ -785,13 +753,10 @@ export default function App() {
                 <div className="text-sm text-neutral-300 mt-1">
                   Гарантія: <span className="text-neutral-100">{getWarranty()}</span>
                   <a
-                    href="/#warranty"
+                    href="/#/warranty"
                     className="ml-1 inline-flex items-center justify-center w-3 h-3 rounded-full border border-neutral-600 text-[8px] leading-none text-neutral-400 align-super hover:text-neutral-900 hover:bg-yellow-400 hover:border-yellow-400"
                     title="Детальніше про гарантію"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setProductOpen(null); // при переході закриваємо модалку
-                    }}
+                    onClick={(e) => e.stopPropagation()}
                   >
                     i
                   </a>
@@ -828,18 +793,12 @@ export default function App() {
 
       {/* Cart Drawer */}
       {cartOpen && (
-        <div className="fixed inset-0 z-[60]">
-          <div
-            className="absolute inset-0 bg-black/60"
-            onClick={() => setCartOpen(false)}
-          />
+        <div className="fixed inset-0 z-[70]">
+          <div className="absolute inset-0 bg-black/60" onClick={() => setCartOpen(false)} />
           <div className="absolute right-0 top-0 h-full w-full max-w-md bg-neutral-950 border-l border-neutral-800 p-4 overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-xl font-bold">Кошик</h2>
-              <button
-                onClick={() => setCartOpen(false)}
-                className="text-neutral-400 hover:text-neutral-200"
-              >
+              <button onClick={() => setCartOpen(false)} className="text-neutral-400 hover:text-neutral-200">
                 Закрити
               </button>
             </div>
@@ -851,23 +810,16 @@ export default function App() {
                 {cartItems.map((item) => (
                   <div key={item.id} className="rounded-xl border border-neutral-800 p-3">
                     <div className="flex items-start gap-3">
-                      <div className="h-16 w-24 rounded-lg overflow-hidden bg-neutral-800">
+                      <div className="h-16 w-24 rounded-lg bg-neutral-800 grid place-items-center text-neutral-400 text-xs overflow-hidden">
                         {hasImages(item.images) ? (
-                          <img
-                            src={item.images[0]}
-                            alt={item.number}
-                            className="w-full h-full object-cover"
-                            onError={(e) => (e.currentTarget.style.display = "none")}
-                          />
+                          <img src={item.images[0]} alt="" className="w-full h-full object-cover" />
                         ) : (
-                          <div className="w-full h-full grid place-items-center text-neutral-400 text-xs">
-                            Фото
-                          </div>
+                          "Фото"
                         )}
                       </div>
                       <div className="flex-1">
                         <div className="font-semibold">{item.number}</div>
-                        <div className="text-sm text-neutral-400">OEM: {item.oem}</div>
+                        <div className="text-sm text-neutral-400">OEM: {item.oem || "—"}</div>
                         <div className="flex items-center gap-2 mt-2">
                           <input
                             type="number"
@@ -876,10 +828,7 @@ export default function App() {
                             onChange={(e) => updateQty(item.id, e.target.value)}
                             className="w-24 bg-neutral-900 border border-neutral-800 rounded-lg px-2 py-1 text-sm"
                           />
-                          <button
-                            onClick={() => removeFromCart(item.id)}
-                            className="text-sm text-red-400 hover:text-red-300"
-                          >
+                          <button onClick={() => removeFromCart(item.id)} className="text-sm text-red-400 hover:text-red-300">
                             Видалити
                           </button>
                         </div>
@@ -890,11 +839,10 @@ export default function App() {
                     </div>
                   </div>
                 ))}
+
                 <div className="flex items-center justify-between border-t border-neutral-800 pt-3">
                   <div className="text-neutral-400">Разом</div>
-                  <div className="text-lg font-bold text-yellow-400">
-                    {cartTotal.toLocaleString("uk-UA")} ₴
-                  </div>
+                  <div className="text-lg font-bold text-yellow-400">{cartTotal.toLocaleString("uk-UA")} ₴</div>
                 </div>
 
                 <div className="flex gap-2">
@@ -925,18 +873,12 @@ export default function App() {
 
       {/* Checkout Modal */}
       {checkoutOpen && (
-        <div className="fixed inset-0 z-[70]">
-          <div
-            className="absolute inset-0 bg-black/60"
-            onClick={() => setCheckoutOpen(false)}
-          />
+        <div className="fixed inset-0 z-[80]">
+          <div className="absolute inset-0 bg-black/60" onClick={() => setCheckoutOpen(false)} />
           <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-lg rounded-2xl border border-neutral-800 bg-neutral-950 p-5">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-xl font-bold">Швидке замовлення</h2>
-              <button
-                onClick={() => setCheckoutOpen(false)}
-                className="text-neutral-400 hover:text-neutral-200"
-              >
+              <button onClick={() => setCheckoutOpen(false)} className="text-neutral-400 hover:text-neutral-200">
                 Закрити
               </button>
             </div>
@@ -967,14 +909,9 @@ export default function App() {
                     <div className="text-sm mb-1">Телефон</div>
                     <input
                       value={formatUAPhone(order.phone)}
-                      onChange={(e) =>
-                        setOrder((o) => ({
-                          ...o,
-                          phone: normalizeUAPhoneInput(e.target.value),
-                        }))
-                      }
+                      onChange={(e) => setOrder((o) => ({ ...o, phone: normalizeUAPhoneInput(e.target.value) }))}
                       inputMode="numeric"
-                      placeholder="+380 XX XXX XX XX"
+                      placeholder="+380 93 777 93 03"
                       className="w-full rounded-lg bg-neutral-900 border border-neutral-800 px-3 py-2 text-sm outline-none focus:border-yellow-400 text-neutral-100"
                     />
                   </label>
@@ -992,35 +929,34 @@ export default function App() {
                   </select>
                 </label>
 
-                {/* Згода з гарантією */}
                 <label className="flex items-start gap-2 text-sm text-neutral-300">
                   <input
                     type="checkbox"
-                    checked={agree}
-                    onChange={(e) => setAgree(e.target.checked)}
+                    checked={order.agree}
+                    onChange={(e) => setOrder((o) => ({ ...o, agree: e.target.checked }))}
                     className="mt-1"
                   />
                   <span>
-                    Я ознайомився(-лась) з{" "}
-                    <a
-                      href="/#warranty"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-yellow-400 hover:underline"
-                      title="Умови гарантії Diesel Hub"
-                    >
+                    Я ознайомився з{" "}
+                    <a href="/#/warranty" target="_blank" className="text-yellow-400 hover:underline">
                       умовами гарантії Diesel Hub
                     </a>{" "}
-                    і погоджуюсь з ними.
+                    і погоджуюсь із ними.
                   </span>
                 </label>
 
                 <button
                   onClick={placeOrder}
-                  disabled={!canSubmit}
+                  disabled={
+                    !nameValid || !phoneValid || !agreeValid || cartItems.length === 0 || cartItems.some((i) => i.qty <= 0)
+                  }
                   className={classNames(
                     "w-full rounded-xl font-semibold py-3",
-                    !canSubmit
+                    !nameValid ||
+                      !phoneValid ||
+                      !agreeValid ||
+                      cartItems.length === 0 ||
+                      cartItems.some((i) => i.qty <= 0)
                       ? "bg-neutral-800 text-neutral-500 cursor-not-allowed"
                       : "bg-yellow-400 text-neutral-950 hover:brightness-90"
                   )}
