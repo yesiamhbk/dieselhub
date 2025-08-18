@@ -240,5 +240,7 @@ app.post("/api/order", async (req, res) => {
 });
 
 /* === ВАЖНО ДЛЯ RENDER === */
-const PORT = process.env.PORT || 8787;   // <-- Render даст свой порт
-app.listen(PORT, "0.0.0.0", () => console.log(`API server on :${PORT}`));
+app.listen(process.env.PORT || 8787, '0.0.0.0', () =>
+  console.log(`API server on http://localhost:${process.env.PORT || 8787}`)
+);
+
