@@ -58,7 +58,6 @@ app.get("/api/debug/db", async (_req, res) => {
 // ===== Товары =====
 app.get("/api/products", async (_req, res) => {
   try {
-    // безопасная сортировка по id (есть всегда)
     const { data, error } = await supaAdmin
       .from("products")
       .select("*")
@@ -74,7 +73,7 @@ app.get("/api/products", async (_req, res) => {
 // Создание/апсерта товара
 app.post("/api/admin/product", requireAdmin, async (req, res) => {
   try {
-    const payload = req.body; // { number, oem, ... }
+    const payload = req.body;
     const { data, error } = await supaAdmin
       .from("products")
       .upsert(payload)
@@ -88,24 +87,14 @@ app.post("/api/admin/product", requireAdmin, async (req, res) => {
   }
 });
 
-// Частичное редактирование (не трогаем поля, которых нет в body)
+// Частичное редактирование (обновляем только пришедшие поля)
 app.patch("/api/admin/product/:id", requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const src = req.body || {};
-    // разрешённые поля
     const allowed = [
-      "price",
-      "qty",
-      "availability",
-      "number",
-      "oem",
-      "cross",
-      "manufacturer",
-      "condition",
-      "type",
-      "engine",
-      "models",
+      "price", "qty", "availability", "number", "oem",
+      "cross", "manufacturer", "condition", "type", "engine", "models", "images",
     ];
     const patch = {};
     for (const k of allowed) if (k in src && src[k] !== undefined) patch[k] = src[k];
@@ -234,7 +223,6 @@ app.post("/api/order", async (req, res) => {
       `${itemsText}\n\n` +
       `Σ Разом: *${total.toLocaleString("uk-UA")} ₴*`;
 
-    // в Node 18+ fetch глобальный
     if (TELEGRAM_BOT_TOKEN && TELEGRAM_CHAT_ID) {
       const tgUrl = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
       await fetch(tgUrl, {
@@ -251,6 +239,6 @@ app.post("/api/order", async (req, res) => {
   }
 });
 
-const PORT = process.env.PORT || 8787;
-app.listen(PORT, () => console.log(`API server on http://localhost:${PORT}`));
-
+/* === ВАЖНО ДЛЯ RENDER === */
+const PORT = process.env.PORT || 8787;   // <-- Render даст свой порт
+app.listen(PORT, "0.0.0.0", () => console.log(`API server on :${PORT}`));
