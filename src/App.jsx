@@ -71,6 +71,23 @@ function formatUAPhone(d) {
   return out.trim();
 }
 
+/* ===================== НП: допоміжні ===================== */
+/** Проксі-ендпоїнти на бекенді (опціонально). Якщо їх нема — повертаємо null і вмикаємо ручний режим */
+async function npFetch(path, params = {}) {
+  try {
+    const url = new URL(`${API}/api/np/${path}`);
+    Object.entries(params).forEach(([k, v]) => {
+      if (v != null && v !== "") url.searchParams.set(k, String(v));
+    });
+    const r = await fetch(url.toString());
+    if (!r.ok) return null;
+    const d = await r.json();
+    return d;
+  } catch {
+    return null;
+  }
+}
+
 /* ===================== Додаток ===================== */
 
 export default function App() {
@@ -134,8 +151,17 @@ export default function App() {
       }
       if (filters.oem && !has(p.oem, filters.oem)) return false;
       if (filters.cross && !(p.cross || []).some((c) => has(c, filters.cross))) return false;
-      if (filters.carModel && !(p.models || []).some((m) => has(m, filters.carModel)))
-        return false;
+
+      // Поиск по нескольким моделям, введённым через запятую (OR-логика)
+      const modelTokens = String(filters.carModel || "")
+        .split(",")
+        .map((s) => s.trim().toLowerCase())
+        .filter(Boolean);
+      if (modelTokens.length) {
+        const hay = (p.models || []).map((m) => String(m).toLowerCase());
+        const hasAny = modelTokens.some((tok) => hay.some((m) => m.includes(tok)));
+        if (!hasAny) return false;
+      }
 
       if (!q) return true;
       return (
@@ -232,21 +258,76 @@ export default function App() {
     phone: "", // лише 9 «національних» цифр
     delivery: "Нова пошта",
     agree: false,
+
+    // Нова Пошта
+    npCityText: "",
+    npCity: null, // {Ref, Present}
+    npType: "warehouse", // 'warehouse' | 'postomat'
+    npWarehouse: null, // {Ref, Number, Description}
   });
+
+  // --- НП: локальний стан списків
+  const [npCityOpts, setNpCityOpts] = useState([]); // [{Ref, Present}]
+  const [npWhOpts, setNpWhOpts] = useState([]); // [{Ref, Number, Description}]
 
   // Валідація
   const nameValid = /^[A-Za-zА-Яа-яЁёІіЇїЄєҐґ'’ -]{1,30}$/.test(order.name || "");
   const phoneValid = (order.phone || "").length === 9;
   const agreeValid = !!order.agree;
 
+  // Дебаунс-пошук населених пунктів (через бек-проксі, якщо доступна)
+  useEffect(() => {
+    let t = null;
+    if (order.delivery === "Нова пошта" && order.npCityText.trim().length >= 2) {
+      t = setTimeout(async () => {
+        const data = await npFetch("settlements", { q: order.npCityText.trim(), limit: 20 });
+        setNpCityOpts(Array.isArray(data) ? data : []);
+      }, 300);
+    } else {
+      setNpCityOpts([]);
+    }
+    return () => clearTimeout(t);
+  }, [order.delivery, order.npCityText]);
+
+  // Коли місто або тип змінюється — перезавантажити список відділень/почтоматів
+  useEffect(() => {
+    let cancelled = false;
+    async function run() {
+      if (order.delivery !== "Нова пошта" || !order.npCity?.Ref) {
+        setNpWhOpts([]);
+        return;
+      }
+      const type = order.npType || "warehouse";
+      const data = await npFetch("warehouses", { cityRef: order.npCity.Ref, type });
+      if (!cancelled) setNpWhOpts(Array.isArray(data) ? data : []);
+    }
+    run();
+    return () => {
+      cancelled = true;
+    };
+  }, [order.delivery, order.npCity, order.npType]);
+
   async function placeOrder() {
     if (!nameValid || !phoneValid || !agreeValid) return;
     if (cartItems.length === 0 || cartItems.some((i) => i.qty <= 0)) return;
 
+    // Формуємо людинозрозумілий текст доставки, щоб бекенд не міняти
+    let deliveryText = order.delivery;
+    if (order.delivery === "Нова пошта") {
+      const cityPart =
+        order.npCity?.Present || (order.npCityText ? order.npCityText.trim() : "");
+      const typeLabel = order.npType === "postomat" ? "Почтомат" : "Відділення";
+      const whPart = order.npWarehouse
+        ? `№${order.npWarehouse.Number} — ${order.npWarehouse.Description}`
+        : "";
+      const pieces = [cityPart, typeLabel, whPart].filter(Boolean);
+      if (pieces.length) deliveryText += " · " + pieces.join(", ");
+    }
+
     const payload = {
       name: order.name.trim(),
       phone: `+380${order.phone}`,
-      delivery: order.delivery,
+      delivery: deliveryText,
       items: cartItems
         .filter((i) => i.qty > 0)
         .map((i) => ({
@@ -274,14 +355,23 @@ export default function App() {
   }
 
   function openCheckout() {
-    setOrder({ name: "", phone: "", delivery: "Нова пошта", agree: false });
+    setOrder({
+      name: "",
+      phone: "",
+      delivery: "Нова пошта",
+      agree: false,
+      npCityText: "",
+      npCity: null,
+      npType: "warehouse",
+      npWarehouse: null,
+    });
     setOrderPlaced(false);
     setCheckoutOpen(true);
   }
 
   /* ===================== UI ===================== */
   return (
-    <div className="min-h-screen bg-neutral-950 text-neutral-100">
+    <div className="min-h-screen bg-neutral-950 text-neutral-100 overflow-x-hidden">
       {/* Header */}
       <header className="sticky top-0 z-40 bg-neutral-950/60 backdrop-blur-md border-b border-neutral-800">
         <div className="mx-auto max-w-7xl px-4 py-3 flex items-center gap-4">
@@ -656,7 +746,7 @@ export default function App() {
             </div>
 
             {/* Показати ще */}
-            <div>
+            <div className="shrink-0">
               <button
                 onClick={() => {
                   setMode("more");
@@ -917,17 +1007,136 @@ export default function App() {
                   </label>
                 </div>
 
+                {/* Доставка */}
                 <label className="block">
                   <div className="text-sm mb-1">Спосіб доставки</div>
                   <select
                     value={order.delivery}
-                    onChange={(e) => setOrder((o) => ({ ...o, delivery: e.target.value }))}
+                    onChange={(e) =>
+                      setOrder((o) => ({
+                        ...o,
+                        delivery: e.target.value,
+                      }))
+                    }
                     className="w-full rounded-lg bg-neutral-900 border border-neutral-800 px-3 py-2 text-sm outline-none focus:border-yellow-400"
                   >
                     <option>Нова пошта</option>
                     <option>Самовивіз</option>
                   </select>
                 </label>
+
+                {/* Блок НП */}
+                {order.delivery === "Нова пошта" && (
+                  <div className="rounded-xl border border-neutral-800 p-3 space-y-3">
+                    {/* Місто */}
+                    <div className="relative">
+                      <div className="text-sm mb-1">Населений пункт</div>
+                      <input
+                        value={order.npCityText}
+                        onChange={(e) =>
+                          setOrder((o) => ({
+                            ...o,
+                            npCityText: e.target.value,
+                            npCity: null,
+                            npWarehouse: null,
+                          }))
+                        }
+                        placeholder="Напр.: Київ, Кропивницький..."
+                        className="w-full rounded-lg bg-neutral-900 border border-neutral-800 px-3 py-2 text-sm outline-none focus:border-yellow-400"
+                      />
+                      {/* Підказки */}
+                      {npCityOpts.length > 0 && (
+                        <div className="absolute z-10 mt-1 w-full max-h-60 overflow-auto rounded-lg border border-neutral-800 bg-neutral-950 shadow-lg">
+                          {npCityOpts.map((c) => (
+                            <button
+                              key={c.Ref}
+                              onClick={() =>
+                                setOrder((o) => ({
+                                  ...o,
+                                  npCityText: c.Present || "",
+                                  npCity: c,
+                                  npWarehouse: null,
+                                }))
+                              }
+                              className="block w-full text-left px-3 py-2 text-sm hover:bg-neutral-900"
+                            >
+                              {c.Present}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      {order.npCityText && npCityOpts.length === 0 && (
+                        <div className="mt-1 text-xs text-neutral-500">
+                          Підказки недоступні — можна ввести вручну.
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Тип: відділення / почтомат */}
+                    <div className="text-sm">
+                      <div className="mb-1">Тип отримання</div>
+                      <div className="flex items-center gap-4">
+                        <label className="inline-flex items-center gap-2">
+                          <input
+                            type="radio"
+                            name="npType"
+                            checked={order.npType === "warehouse"}
+                            onChange={() => setOrder((o) => ({ ...o, npType: "warehouse", npWarehouse: null }))}
+                          />
+                          Відділення
+                        </label>
+                        <label className="inline-flex items-center gap-2">
+                          <input
+                            type="radio"
+                            name="npType"
+                            checked={order.npType === "postomat"}
+                            onChange={() => setOrder((o) => ({ ...o, npType: "postomat", npWarehouse: null }))}
+                          />
+                          Почтомат
+                        </label>
+                      </div>
+                    </div>
+
+                    {/* Номер відділення/почтомату: якщо є список — селект, інакше інпут */}
+                    <div className="text-sm">
+                      <div className="mb-1">
+                        {order.npType === "postomat" ? "Почтомат" : "Відділення"}
+                      </div>
+                      {npWhOpts.length > 0 ? (
+                        <select
+                          value={order.npWarehouse?.Ref || ""}
+                          onChange={(e) => {
+                            const found = npWhOpts.find((w) => w.Ref === e.target.value) || null;
+                            setOrder((o) => ({ ...o, npWarehouse: found }));
+                          }}
+                          className="w-full rounded-lg bg-neutral-900 border border-neutral-800 px-3 py-2 text-sm outline-none focus:border-yellow-400"
+                        >
+                          <option value="">Оберіть...</option>
+                          {npWhOpts.map((w) => (
+                            <option key={w.Ref} value={w.Ref}>
+                              №{w.Number} — {w.Description}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <input
+                          value={order.npWarehouse?.Number || ""}
+                          onChange={(e) =>
+                            setOrder((o) => ({
+                              ...o,
+                              npWarehouse: { Number: e.target.value, Description: "" },
+                            }))
+                          }
+                          placeholder="№ відділення / почтомату"
+                          className="w-full rounded-lg bg-neutral-900 border border-neutral-800 px-3 py-2 text-sm outline-none focus:border-yellow-400"
+                        />
+                      )}
+                      <div className="mt-1 text-xs text-neutral-500">
+                        Якщо список не зʼявився — введіть номер вручну.
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 <label className="flex items-start gap-2 text-sm text-neutral-300">
                   <input

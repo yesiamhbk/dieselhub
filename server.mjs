@@ -14,6 +14,8 @@ const {
   ADMIN_TOKEN,
   TELEGRAM_BOT_TOKEN,
   TELEGRAM_CHAT_ID,
+  NP_API_KEY,            // новый ключ (предпочтительно)
+  NOVA_POSHTA_KEY,       // совместимость с предыдущим именем
 } = process.env;
 
 if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
@@ -21,10 +23,10 @@ if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
   process.exit(1);
 }
 
-// админ-клиент по service role
+// ====== Supabase (admin) ======
 const supaAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-// простая админ-авторизация
+// ====== простая админ-авторизация ======
 function requireAdmin(req, res, next) {
   const token = req.header("x-admin-token");
   if (!token || token !== ADMIN_TOKEN) return res.status(401).json({ error: "unauthorized" });
@@ -239,8 +241,129 @@ app.post("/api/order", async (req, res) => {
   }
 });
 
+/* =========================
+   Nova Poshta proxy (server)
+   ========================= */
+const NP_KEY = NP_API_KEY || NOVA_POSHTA_KEY;
+
+// Универсальный вызов API НП
+async function npCall(modelName, calledMethod, methodProperties = {}) {
+  if (!NP_KEY) throw new Error("Nova Poshta API key is missing (NP_API_KEY or NOVA_POSHTA_KEY)");
+  const r = await fetch("https://api.novaposhta.ua/v2.0/json/", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      apiKey: NP_KEY,
+      modelName,
+      calledMethod,
+      methodProperties,
+    }),
+  });
+  if (!r.ok) throw new Error(`NovaPoshta HTTP ${r.status}`);
+  const j = await r.json();
+  if (j?.success === false) {
+    const msg = (j.errors && j.errors.join("; ")) || "NovaPoshta error";
+    throw new Error(msg);
+  }
+  return j;
+}
+
+// кеш (6 часов)
+const CACHE_MS = 6 * 60 * 60 * 1000;
+const cityCache = new Map(); // key: qLower -> {ts, data}
+const whCache = new Map();   // key: `${cityRef}|${type}` -> {ts, data}
+
+const isPostomatLike = (w) =>
+  /поштомат|postomat|parcel\s*locker/i.test(
+    `${w.TypeOfWarehouse || ""} ${w.CategoryOfWarehouse || ""} ${w.Description || ""}`
+  );
+
+// --- settlements (поиск городов) ---
+// GET /api/np/settlements?q=київ&limit=20
+app.get("/api/np/settlements", async (req, res) => {
+  try {
+    const q = String(req.query.q || "").trim();
+    const limit = Math.max(1, Math.min(50, parseInt(req.query.limit, 10) || 20));
+    if (q.length < 2) return res.json([]);
+
+    const key = `${q.toLowerCase()}|${limit}`;
+    const hit = cityCache.get(key);
+    if (hit && Date.now() - hit.ts < CACHE_MS) return res.json(hit.data);
+
+    const j = await npCall("Address", "searchSettlements", {
+      CityName: q,
+      Limit: String(limit),
+      Page: "1",
+    });
+
+    // структура: j.data[0].Addresses[]
+    const addresses = j?.data?.[0]?.Addresses || [];
+    const list = addresses.map((a) => ({
+      Ref: a.DeliveryCity || a.Ref,     // используем как CityRef
+      Present: a.Present || a.MainDescription, // "м. Київ, Київська обл."
+      Area: a.Area,
+      Region: a.Region,
+    }));
+
+    cityCache.set(key, { ts: Date.now(), data: list });
+    res.json(list);
+  } catch (e) {
+    console.error("[/api/np/settlements] error:", e);
+    // для UI безопаснее вернуть пустой массив, чем 500
+    res.json([]);
+  }
+});
+
+// --- warehouses (отделения/почтоматы) ---
+// GET /api/np/warehouses?cityRef=XXXX&type=warehouse|postomat
+app.get("/api/np/warehouses", async (req, res) => {
+  try {
+    const cityRef = String(req.query.cityRef || "").trim();
+    const type = String(req.query.type || "warehouse").toLowerCase(); // warehouse | postomat
+    if (!cityRef) return res.json([]);
+
+    const key = `${cityRef}|${type}`;
+    const hit = whCache.get(key);
+    if (hit && Date.now() - hit.ts < CACHE_MS) return res.json(hit.data);
+
+    // AddressGeneral.getWarehouses даёт полный состав полей
+    const j = await npCall("AddressGeneral", "getWarehouses", {
+      CityRef: cityRef,
+      Page: "1",
+      Limit: "500",
+      Language: "UA",
+    });
+
+    let arr = Array.isArray(j?.data) ? j.data : [];
+
+    if (type === "postomat") {
+      arr = arr.filter(isPostomatLike);
+    } else {
+      arr = arr.filter((w) => !isPostomatLike(w));
+    }
+
+    const list = arr.map((w) => ({
+      Ref: w.Ref,
+      Number: String(w.Number || ""),
+      Description: w.ShortAddress || w.Description,
+      TypeOfWarehouse: w.TypeOfWarehouse,
+      CategoryOfWarehouse: w.CategoryOfWarehouse,
+    }));
+
+    whCache.set(key, { ts: Date.now(), data: list });
+    res.json(list);
+  } catch (e) {
+    console.error("[/api/np/warehouses] error:", e);
+    res.json([]);
+  }
+});
+
+// ===== Совместимость со старыми путями (/api/nova/...) =====
+app.get("/api/nova/cies", (req, res) => res.redirect(307, `/api/np/settlements?${new URLSearchParams(req.query).toString()}`)); // опечатки на всякий
+app.get("/api/nova/cities", (req, res) => res.redirect(307, `/api/np/settlements?${new URLSearchParams(req.query).toString()}`));
+app.get("/api/nova/warehouses", (req, res) => res.redirect(307, `/api/np/warehouses?${new URLSearchParams(req.query).toString()}`));
+
 /* === ВАЖНО ДЛЯ RENDER === */
-app.listen(process.env.PORT || 8787, '0.0.0.0', () =>
+app.listen(process.env.PORT || 8787, "0.0.0.0", () =>
   console.log(`API server on http://localhost:${process.env.PORT || 8787}`)
 );
-

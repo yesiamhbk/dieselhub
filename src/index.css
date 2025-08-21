@@ -3,3 +3,22 @@
 /* указываем файлы, которые Tailwind должен сканировать (v4) */
 @source "../index.html";
 @source "./**/*.{js,jsx,ts,tsx}";
+
+:root { color-scheme: dark; }
+
+/* iOS Safari: не показывай белый фон за тулбаром */
+html, body {
+  min-height: 100%;
+  background: #0a0a0a; /* Tailwind neutral-950 */
+}
+
+/* Корень всегда на высоту видимой области (новые единицы) */
+#root {
+  min-height: 100svh;   /* современные браузеры */
+  min-height: 100dvh;   /* fallback для новых iOS */
+  background: #0a0a0a;
+}
+
+html, body {
+  overflow-x: hidden;   /* на всякий случай скрываем горизонтальный скролл */
+}

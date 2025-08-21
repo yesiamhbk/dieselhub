@@ -1,11 +1,11 @@
 // src/admin.jsx
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 
-const MANUFACTURERS = ["Bosch", "Denso", "Delphi", "Siemens VDO", "Continental"];
-const CONDITIONS = ["Нове", "Відновлене"];
-const TYPES = ["Форсунка", "ТНВД", "Клапан"];
-const AVAILABILITIES = ["В наявності", "Під замовлення"];
+// Базовый URL API для продакшна (например, https://diesel-api.onrender.com)
+// ЛОКАЛЬНО можно оставить пустым (тогда будут ходить на /api через прокси Vite)
+const API = import.meta.env.VITE_API_BASE || "";
 
+/* ===== мини-компоненты ===== */
 function Input({ label, ...props }) {
   return (
     <label className="block">
@@ -35,26 +35,36 @@ function Textarea({ label, ...props }) {
   );
 }
 
+/* ===== константы ===== */
+const MANUFACTURERS = ["Bosch", "Denso", "Delphi", "Siemens VDO", "Continental"];
+const CONDITIONS = ["Нове", "Відновлене"];
+const TYPES = ["Форсунка", "ТНВД", "Клапан"];
+const AVAILABILITIES = ["В наявності", "Під замовлення"];
+
+/* ===== страница ===== */
 export default function AdminPanel() {
-  // --- токен ---
+  /* --- токен --- */
   const [token, setToken] = useState(localStorage.getItem("dh_admin_token") || "");
   const [tokenInput, setTokenInput] = useState("");
   const [err, setErr] = useState("");
 
-  // --- список товарів ---
+  /* --- список товаров --- */
   const [products, setProducts] = useState([]);
+
   async function loadProducts() {
     try {
-      const r = await fetch("/api/products");
+      const r = await fetch(`${API}/api/products`);
       const d = await r.json();
       setProducts(Array.isArray(d) ? d : []);
     } catch {
       setProducts([]);
     }
   }
-  useEffect(() => { loadProducts(); }, []);
+  useEffect(() => {
+    loadProducts();
+  }, []);
 
-  // --- форма додавання ---
+  /* --- форма добавления --- */
   const [f, setF] = useState({
     number: "",
     oem: "",
@@ -67,21 +77,20 @@ export default function AdminPanel() {
     price: "0",
     engine: "",
     models: "",
-    images: "", // кожен рядок — URL
+    images: "", // по строке на URL
   });
 
-  function parseListComma(s) {
-    return (s || "")
+  const parseListComma = (s) =>
+    (s || "")
       .split(",")
       .map((x) => x.trim())
       .filter(Boolean);
-  }
-  function parseLines(s) {
-    return (s || "")
+
+  const parseLines = (s) =>
+    (s || "")
       .split(/\r?\n/)
       .map((x) => x.trim())
       .filter(Boolean);
-  }
 
   async function addProduct() {
     setErr("");
@@ -105,7 +114,7 @@ export default function AdminPanel() {
       images: parseLines(f.images),
     };
 
-    const r = await fetch("/api/admin/product", {
+    const r = await fetch(`${API}/api/admin/product`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -121,40 +130,26 @@ export default function AdminPanel() {
     }
 
     setF({
-      number: "", oem: "", cross: "", manufacturer: MANUFACTURERS[0],
-      condition: CONDITIONS[0], type: TYPES[0], availability: AVAILABILITIES[0],
-      qty: "1", price: "0", engine: "", models: "", images: "",
+      number: "",
+      oem: "",
+      cross: "",
+      manufacturer: MANUFACTURERS[0],
+      condition: CONDITIONS[0],
+      type: TYPES[0],
+      availability: AVAILABILITIES[0],
+      qty: "1",
+      price: "0",
+      engine: "",
+      models: "",
+      images: "",
     });
     await loadProducts();
     alert("Товар додано");
   }
 
-  // ======= Редагування (часткове) — ЛИШЕ price/qty/availability =======
-  async function saveProduct(p) {
-    const patch = {
-      price: Number(p.price || 0),
-      qty: Number(p.qty || 0),
-      availability: p.availability,
-    };
-    const r = await fetch(`/api/admin/product/${p.id}`, {
-      method: "PATCH",
-      headers: {
-        "Content-Type": "application/json",
-        "x-admin-token": token,
-      },
-      body: JSON.stringify(patch),
-    });
-    if (!r.ok) {
-      const e = await r.json().catch(() => ({}));
-      alert(e.error || "Помилка");
-      return;
-    }
-    await loadProducts();
-  }
-
   async function delProduct(id) {
     if (!confirm("Видалити товар?")) return;
-    const r = await fetch(`/api/admin/product/${id}`, {
+    const r = await fetch(`${API}/api/admin/product/${id}`, {
       method: "DELETE",
       headers: { "x-admin-token": token },
     });
@@ -166,15 +161,40 @@ export default function AdminPanel() {
     await loadProducts();
   }
 
-  // ==== Фото ====
+  // Сохраняем ТОЛЬКО редактируемые поля (цена/кол-во/наличие)
+  async function saveProduct(p) {
+    const patch = {
+      price: Number(p.price || 0),
+      qty: Number(p.qty || 0),
+      availability: p.availability,
+    };
+
+    const r = await fetch(`${API}/api/admin/product/${p.id}`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        "x-admin-token": token,
+      },
+      body: JSON.stringify(patch),
+    });
+
+    if (!r.ok) {
+      const e = await r.json().catch(() => ({}));
+      alert(e.error || "Помилка");
+      return;
+    }
+    await loadProducts();
+  }
+
+  /* ===== загрузка/удаление картинок ===== */
   async function uploadImages(productId, files) {
     if (!files || !files.length) return;
     const fd = new FormData();
     for (const f of files) fd.append("files", f);
 
-    const r = await fetch(`/api/admin/product/${productId}/upload`, {
+    const r = await fetch(`${API}/api/admin/product/${productId}/upload`, {
       method: "POST",
-      headers: { "x-admin-token": token }, // НЕ ставимо Content-Type вручну!
+      headers: { "x-admin-token": token }, // ВАЖНО: без Content-Type
       body: fd,
     });
 
@@ -187,8 +207,7 @@ export default function AdminPanel() {
   }
 
   async function deleteOneImage(productId, url) {
-    if (!confirm("Видалити це фото?")) return;
-    const r = await fetch(`/api/admin/product/${productId}/image`, {
+    const r = await fetch(`${API}/api/admin/product/${productId}/image`, {
       method: "DELETE",
       headers: {
         "Content-Type": "application/json",
@@ -204,18 +223,27 @@ export default function AdminPanel() {
     await loadProducts();
   }
 
-  // --- екран логіна ---
+  /* ===== экран логина ===== */
   if (!token) {
     return (
       <div className="min-h-screen bg-neutral-950 text-neutral-100 grid place-items-center">
         <div className="w-full max-w-md rounded-2xl border border-neutral-800 p-6">
           <h1 className="text-xl font-bold mb-3">Вхід в адмін-панель</h1>
           <p className="text-sm text-neutral-400 mb-4">
-            Введіть <span className="text-neutral-200 font-semibold">ADMIN_TOKEN</span>, який ви задали у <span className="font-mono">.env.local</span>.
+            Введіть <span className="text-neutral-200 font-semibold">ADMIN_TOKEN</span> (з
+            <span className="font-mono"> .env.local</span>).
           </p>
-          <Input label="ADMIN_TOKEN" value={tokenInput} onChange={(e) => setTokenInput(e.target.value.trim())} />
+          <Input
+            label="ADMIN_TOKEN"
+            value={tokenInput}
+            onChange={(e) => setTokenInput(e.target.value.trim())}
+          />
           <button
-            onClick={() => { if (!tokenInput) return; localStorage.setItem("dh_admin_token", tokenInput); setToken(tokenInput); }}
+            onClick={() => {
+              if (!tokenInput) return;
+              localStorage.setItem("dh_admin_token", tokenInput);
+              setToken(tokenInput);
+            }}
             className="mt-4 w-full rounded-xl bg-yellow-400 text-neutral-950 font-semibold py-3 hover:brightness-90"
           >
             Увійти
@@ -226,15 +254,21 @@ export default function AdminPanel() {
     );
   }
 
+  /* ===== основной UI ===== */
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100">
       <header className="sticky top-0 z-10 bg-neutral-950/60 backdrop-blur-md border-b border-neutral-800">
         <div className="mx-auto max-w-7xl px-4 py-3 flex items-center justify-between">
           <div className="font-bold">Адмін-панель · Diesel Hub</div>
           <div className="flex items-center gap-2">
-            <a href="/#/" className="text-sm text-neutral-300 hover:text-yellow-400">← до магазину</a>
+            <a href="/#/" className="text-sm text-neutral-300 hover:text-yellow-400">
+              ← до магазину
+            </a>
             <button
-              onClick={() => { localStorage.removeItem("dh_admin_token"); setToken(""); }}
+              onClick={() => {
+                localStorage.removeItem("dh_admin_token");
+                setToken("");
+              }}
               className="rounded-lg border border-neutral-700 px-3 py-1.5 text-sm hover:border-yellow-400"
             >
               Вийти
@@ -244,14 +278,30 @@ export default function AdminPanel() {
       </header>
 
       <main className="mx-auto max-w-7xl px-4 py-6 grid grid-cols-1 md:grid-cols-2 gap-8">
-        {/* Форма додавання */}
+        {/* форма добавления */}
         <section className="rounded-2xl border border-neutral-800 p-4 space-y-3">
           <div className="text-lg font-semibold mb-2">Додати товар</div>
 
-          <Input label="Номер деталі" value={f.number} onChange={(e) => setF((s) => ({ ...s, number: e.target.value }))} />
-          <Input label="OEM номер" value={f.oem} onChange={(e) => setF((s) => ({ ...s, oem: e.target.value }))} />
-          <Input label="Крос-номери (через кому)" value={f.cross} onChange={(e) => setF((s) => ({ ...s, cross: e.target.value }))} />
-          <Input label="Моделі авто (через кому)" value={f.models} onChange={(e) => setF((s) => ({ ...s, models: e.target.value }))} />
+          <Input
+            label="Номер деталі"
+            value={f.number}
+            onChange={(e) => setF((s) => ({ ...s, number: e.target.value }))}
+          />
+          <Input
+            label="OEM номер"
+            value={f.oem}
+            onChange={(e) => setF((s) => ({ ...s, oem: e.target.value }))}
+          />
+          <Input
+            label="Крос-номери (через кому)"
+            value={f.cross}
+            onChange={(e) => setF((s) => ({ ...s, cross: e.target.value }))}
+          />
+          <Input
+            label="Моделі авто (через кому)"
+            value={f.models}
+            onChange={(e) => setF((s) => ({ ...s, models: e.target.value }))}
+          />
 
           <div className="grid grid-cols-2 gap-3">
             <label className="block">
@@ -261,9 +311,12 @@ export default function AdminPanel() {
                 onChange={(e) => setF((s) => ({ ...s, manufacturer: e.target.value }))}
                 className="w-full rounded-lg bg-neutral-900 border border-neutral-800 px-3 py-2 text-sm outline-none focus:border-yellow-400"
               >
-                {MANUFACTURERS.map((m) => <option key={m}>{m}</option>)}
+                {MANUFACTURERS.map((m) => (
+                  <option key={m}>{m}</option>
+                ))}
               </select>
             </label>
+
             <label className="block">
               <div className="text-sm mb-1">Тип</div>
               <select
@@ -271,9 +324,12 @@ export default function AdminPanel() {
                 onChange={(e) => setF((s) => ({ ...s, type: e.target.value }))}
                 className="w-full rounded-lg bg-neutral-900 border border-neutral-800 px-3 py-2 text-sm outline-none focus:border-yellow-400"
               >
-                {TYPES.map((t) => <option key={t}>{t}</option>)}
+                {TYPES.map((t) => (
+                  <option key={t}>{t}</option>
+                ))}
               </select>
             </label>
+
             <label className="block">
               <div className="text-sm mb-1">Стан</div>
               <select
@@ -281,9 +337,12 @@ export default function AdminPanel() {
                 onChange={(e) => setF((s) => ({ ...s, condition: e.target.value }))}
                 className="w-full rounded-lg bg-neutral-900 border border-neutral-800 px-3 py-2 text-sm outline-none focus:border-yellow-400"
               >
-                {CONDITIONS.map((c) => <option key={c}>{c}</option>)}
+                {CONDITIONS.map((c) => (
+                  <option key={c}>{c}</option>
+                ))}
               </select>
             </label>
+
             <label className="block">
               <div className="text-sm mb-1">Наявність</div>
               <select
@@ -291,30 +350,61 @@ export default function AdminPanel() {
                 onChange={(e) => setF((s) => ({ ...s, availability: e.target.value }))}
                 className="w-full rounded-lg bg-neutral-900 border border-neutral-800 px-3 py-2 text-sm outline-none focus:border-yellow-400"
               >
-                {AVAILABILITIES.map((a) => <option key={a}>{a}</option>)}
+                {AVAILABILITIES.map((a) => (
+                  <option key={a}>{a}</option>
+                ))}
               </select>
             </label>
           </div>
 
           <div className="grid grid-cols-3 gap-3">
-            <Input label="Кількість (шт)" value={f.qty} onChange={(e) => setF((s) => ({ ...s, qty: e.target.value }))} />
-            <Input label="Ціна (₴)" value={f.price} onChange={(e) => setF((s) => ({ ...s, price: e.target.value }))} />
-            <Input label="Обʼєм (л)" value={f.engine} onChange={(e) => setF((s) => ({ ...s, engine: e.target.value }))} placeholder="напр. 2.2" />
+            <Input
+              label="Кількість (шт)"
+              value={f.qty}
+              onChange={(e) => setF((s) => ({ ...s, qty: e.target.value }))}
+            />
+            <Input
+              label="Ціна (₴)"
+              value={f.price}
+              onChange={(e) => setF((s) => ({ ...s, price: e.target.value }))}
+            />
+            <Input
+              label="Обʼєм (л)"
+              value={f.engine}
+              onChange={(e) => setF((s) => ({ ...s, engine: e.target.value }))}
+              placeholder="напр. 2.2"
+            />
           </div>
 
-          <Textarea label="Фото (кожне з нового рядка, повні URL)" value={f.images} onChange={(e) => setF((s) => ({ ...s, images: e.target.value }))} />
+          <Textarea
+            label="Фото (кожне з нового рядка, повні URL)"
+            value={f.images}
+            onChange={(e) => setF((s) => ({ ...s, images: e.target.value }))}
+          />
 
           {err && <div className="text-red-400 text-sm">{err}</div>}
           <div className="flex gap-3">
-            <button onClick={addProduct} className="mt-2 rounded-xl bg-yellow-400 text-neutral-950 font-semibold px-4 py-2 hover:brightness-95">
+            <button
+              onClick={addProduct}
+              className="mt-2 rounded-xl bg-yellow-400 text-neutral-950 font-semibold px-4 py-2 hover:brightness-95"
+            >
               Додати товар
             </button>
             <button
               onClick={() =>
                 setF({
-                  number: "", oem: "", cross: "", manufacturer: MANUFACTURERS[0],
-                  condition: CONDITIONS[0], type: TYPES[0], availability: AVAILABILITIES[0],
-                  qty: "1", price: "0", engine: "", models: "", images: "",
+                  number: "",
+                  oem: "",
+                  cross: "",
+                  manufacturer: MANUFACTURERS[0],
+                  condition: CONDITIONS[0],
+                  type: TYPES[0],
+                  availability: AVAILABILITIES[0],
+                  qty: "1",
+                  price: "0",
+                  engine: "",
+                  models: "",
+                  images: "",
                 })
               }
               className="mt-2 rounded-xl border border-neutral-700 px-4 py-2 hover:border-yellow-400"
@@ -324,11 +414,16 @@ export default function AdminPanel() {
           </div>
         </section>
 
-        {/* Список існуючих */}
+        {/* список товаров */}
         <section className="rounded-2xl border border-neutral-800 p-4">
           <div className="flex items-center justify-between mb-3">
             <div className="text-lg font-semibold">Товари ({products.length})</div>
-            <button onClick={loadProducts} className="text-sm rounded-lg border border-neutral-700 px-3 py-1.5 hover:border-yellow-400">Оновити</button>
+            <button
+              onClick={loadProducts}
+              className="text-sm rounded-lg border border-neutral-700 px-3 py-1.5 hover:border-yellow-400"
+            >
+              Оновити
+            </button>
           </div>
 
           <div className="space-y-3 max-h-[70vh] overflow-y-auto pr-1">
@@ -336,41 +431,89 @@ export default function AdminPanel() {
               <div key={p.id} className="rounded-xl border border-neutral-800 p-3">
                 <div className="flex items-center justify-between gap-3">
                   <div className="min-w-0">
-                    <div className="font-semibold truncate">{p.number} · {p.manufacturer} · {p.type}</div>
-                    <div className="text-sm text-neutral-400">OEM: {p.oem || "—"} · Ціна: {p.price} ₴ · К-сть: {p.qty} · {p.availability}</div>
+                    <div className="font-semibold truncate">
+                      {p.number} · {p.manufacturer} · {p.type}
+                    </div>
+                    <div className="text-sm text-neutral-400">
+                      OEM: {p.oem || "—"} · Ціна: {p.price} ₴ · К-сть: {p.qty} ·{" "}
+                      {p.availability}
+                    </div>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
-                    <button onClick={() => delProduct(p.id)} className="text-sm text-red-400 hover:text-red-300">Видалити</button>
+                    <button
+                      onClick={() => delProduct(p.id)}
+                      className="text-sm text-red-400 hover:text-red-300"
+                    >
+                      Видалити
+                    </button>
                   </div>
                 </div>
 
-                {/* Редагування (тільки price/qty/availability) */}
+                {/* редактируемые поля */}
                 <div className="mt-3 grid grid-cols-3 gap-2">
-                  <Input label="Ціна (₴)" value={p.price} onChange={(e) => setProducts((arr) => arr.map((x) => x.id === p.id ? { ...x, price: Number(e.target.value || 0) } : x))} />
-                  <Input label="Кількість" value={p.qty} onChange={(e) => setProducts((arr) => arr.map((x) => x.id === p.id ? { ...x, qty: Number(e.target.value || 0) } : x))} />
+                  <Input
+                    label="Ціна (₴)"
+                    value={p.price}
+                    onChange={(e) =>
+                      setProducts((arr) =>
+                        arr.map((x) =>
+                          x.id === p.id ? { ...x, price: Number(e.target.value || 0) } : x
+                        )
+                      )
+                    }
+                  />
+                  <Input
+                    label="Кількість"
+                    value={p.qty}
+                    onChange={(e) =>
+                      setProducts((arr) =>
+                        arr.map((x) =>
+                          x.id === p.id ? { ...x, qty: Number(e.target.value || 0) } : x
+                        )
+                      )
+                    }
+                  />
                   <label className="block">
                     <div className="text-sm mb-1">Наявність</div>
                     <select
                       value={p.availability}
-                      onChange={(e) => setProducts((arr) => arr.map((x) => x.id === p.id ? { ...x, availability: e.target.value } : x))}
+                      onChange={(e) =>
+                        setProducts((arr) =>
+                          arr.map((x) =>
+                            x.id === p.id ? { ...x, availability: e.target.value } : x
+                          )
+                        )
+                      }
                       className="w-full rounded-lg bg-neutral-900 border border-neutral-800 px-3 py-2 text-sm outline-none focus:border-yellow-400"
                     >
-                      {AVAILABILITIES.map((a) => <option key={a}>{a}</option>)}
+                      {AVAILABILITIES.map((a) => (
+                        <option key={a}>{a}</option>
+                      ))}
                     </select>
                   </label>
                 </div>
+
                 <div className="mt-2">
-                  <button onClick={() => saveProduct(p)} className="text-sm rounded-lg border border-neutral-700 px-3 py-1.5 hover:border-yellow-400">Зберегти зміни</button>
+                  <button
+                    onClick={() => saveProduct(p)}
+                    className="text-sm rounded-lg border border-neutral-700 px-3 py-1.5 hover:border-yellow-400"
+                  >
+                    Зберегти зміни
+                  </button>
                 </div>
 
-                {/* Фото */}
+                {/* фото */}
                 <div className="mt-4 border-t border-neutral-800 pt-3">
                   <div className="text-sm mb-2">Фото ({p.images?.length || 0})</div>
                   {p.images?.length ? (
                     <div className="grid grid-cols-4 gap-2">
                       {p.images.map((url) => (
                         <div key={url} className="relative">
-                          <img src={url} alt="" className="w-full h-24 object-cover rounded-lg border border-neutral-800" />
+                          <img
+                            src={url}
+                            alt=""
+                            className="w-full h-24 object-cover rounded-lg border border-neutral-800"
+                          />
                           <button
                             onClick={() => deleteOneImage(p.id, url)}
                             className="absolute top-1 right-1 text-[11px] px-2 py-0.5 rounded bg-neutral-900/90 border border-neutral-700 hover:border-red-400"
