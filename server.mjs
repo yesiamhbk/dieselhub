@@ -1,13 +1,3 @@
-/**
- * server.mjs — production-ready for Render
- * Routes:
- *   GET /api/health        -> { ok: true }
- *   GET /api/admin/ping    -> 200 if valid ADMIN_TOKEN, 401 otherwise
- *   GET /api/debug/db      -> info + productsCount
- *   GET /api/products      -> public list (if Supabase configured)
- * Static:
- *   Serves /dist and SPA fallback in production
- */
 import express from "express";
 import cors from "cors";
 import path from "path";
