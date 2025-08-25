@@ -1,5 +1,6 @@
+
 // src/App.jsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 
 /** БАЗОВЫЙ URL API (пусто в dev, на проде через VITE_API_BASE) */
 const API = import.meta.env.VITE_API_BASE || "";
@@ -11,6 +12,12 @@ function classNames(...c) {
 }
 const hasImages = (arr) => Array.isArray(arr) && arr.length > 0;
 
+function getProductStockById(products, id) {
+  const p = products.find((pp) => pp.id === id);
+  const n = Number(p?.qty);
+  return Number.isFinite(n) ? Math.max(0, n) : 0;
+}
+
 // Список типів — обовʼязково є "Клапан"
 const TYPES = ["Форсунка", "ТНВД", "Клапан"];
 const CONDITIONS = ["Нове", "Відновлене"];
@@ -18,12 +25,12 @@ const AVAILABILITIES = ["В наявності", "Під замовлення"];
 
 function ExpandableList({ items = [], max = 3 }) {
   const [open, setOpen] = useState(false);
-  if (!items || items.length === 0) return <span className="text-neutral-400">—</span>;
+  if (!items || items.length === 0) return <span className="text-neutral-400 text-left">—</span>;
   const shown = open ? items : items.slice(0, max);
   const hidden = Math.max(0, items.length - max);
   return (
     <span>
-      <span className="text-neutral-100">{shown.join(", ")}</span>
+      <span className="text-neutral-100 text-left">{shown.join(", ")}</span>
       {hidden > 0 && (
         <button
           onClick={(e) => {
@@ -49,11 +56,19 @@ function formatEngine(v) {
 }
 
 /* ====== Телефон UA: маска + акуратне редагування ====== */
-/** Забираємо все, лишаємо цифри; обрізаємо 380/0 на початку; рівно 9 цифр */
+/** Нормалізація вводу телефону:
+ *  - лишає тільки цифри
+ *  - якщо користувач видаляє все до межі '+380', не повертаємо '38'
+ *  - відкидаємо префікс 380 лише якщо цифр >3 (це точно не межа)
+ *  - рівно 9 «національних» цифр
+ */
 function normalizeUAPhoneInput(input) {
-  let d = String(input || "").replace(/\D+/g, "");
-  if (d.startsWith("380")) d = d.slice(3);
-  if (d.startsWith("0")) d = d.slice(1);
+  let d = String(input || "").replace(/\D+/g, ""); // усі цифри з поля
+  // якщо людина видаляє до межі і залишається '3', '38' або '380' — це порожньо
+  if (/^3(8(0)?)?$/.test(d)) return "";
+  // якщо довший за префікс і починається з 380 — прибираємо префікс
+  if (d.length > 3 && d.startsWith("380")) d = d.slice(3);
+  // тільки 9 цифр
   return d.slice(0, 9);
 }
 /** Рендер +380 XX XXX XX XX (тільки пробіли, без дужок) */
@@ -69,23 +84,6 @@ function formatUAPhone(d) {
   if (c.trim()) out += ` ${c}`;
   if (e.trim()) out += ` ${e}`;
   return out.trim();
-}
-
-/* ===================== НП: допоміжні ===================== */
-/** Проксі-ендпоїнти на бекенді (опціонально). Якщо їх нема — повертаємо null і вмикаємо ручний режим */
-async function npFetch(path, params = {}) {
-  try {
-    const url = new URL(`${API}/api/np/${path}`);
-    Object.entries(params).forEach(([k, v]) => {
-      if (v != null && v !== "") url.searchParams.set(k, String(v));
-    });
-    const r = await fetch(url.toString());
-    if (!r.ok) return null;
-    const d = await r.json();
-    return d;
-  } catch {
-    return null;
-  }
 }
 
 /* ===================== Додаток ===================== */
@@ -150,20 +148,7 @@ export default function App() {
         if (!match) return false;
       }
       if (filters.oem && !has(p.oem, filters.oem)) return false;
-      if (filters.cross && !(p.cross || []).some((c) => has(c, filters.cross))) return false;
-
-      // Поиск по нескольким моделям, введённым через запятую (OR-логика)
-      const modelTokens = String(filters.carModel || "")
-        .split(",")
-        .map((s) => s.trim().toLowerCase())
-        .filter(Boolean);
-      if (modelTokens.length) {
-        const hay = (p.models || []).map((m) => String(m).toLowerCase());
-        const hasAny = modelTokens.some((tok) => hay.some((m) => m.includes(tok)));
-        if (!hasAny) return false;
-      }
-
-      if (!q) return true;
+      if (filters.cross && !(p.cross || []).some((c) => has(c, filters.cross))) return false;if (!q) return true;
       return (
         has(p.number, q) ||
         has(p.oem, q) ||
@@ -204,6 +189,23 @@ export default function App() {
   /* ----------- Кошик ----------- */
   const [cart, setCart] = useState([]); // [{id, qty}]
   const [cartOpen, setCartOpen] = useState(false);
+
+  // Load cart from localStorage on mount
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("cart");
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) setCart(parsed);
+      }
+    } catch {}
+  }, []);
+
+  // Save cart to localStorage on every change
+  useEffect(() => {
+    try { localStorage.setItem("cart", JSON.stringify(cart)); } catch {}
+  }, [cart]);
+
   const cartCount = cart.reduce((s, i) => s + Math.max(0, i.qty), 0);
 
   const cartItems = cart.map((ci) => {
@@ -225,6 +227,20 @@ export default function App() {
     setCartOpen(true);
   }
 
+  function addToCartN(p, n) {
+    setCart((prev) => {
+      const ex = prev.find((i) => i.id === p.id);
+      const stock = Math.max(0, Number(p.qty) || 0);
+      const already = ex ? Math.max(0, Number(ex.qty) || 0) : 0;
+      const maxAdd = Math.max(0, stock - already);
+      const add = Math.min(Math.max(1, Number(n) || 0), maxAdd || 0);
+      if (!add) return prev;
+      if (ex) return prev.map((i) => (i.id === p.id ? { ...i, qty: (i.qty || 0) + add } : i));
+      return [...prev, { id: p.id, qty: add }];
+    });
+    setCartOpen(true);
+  }
+
   // Дозволяємо тимчасово 0; при вводі «05» стане «5»
   function updateQty(id, val) {
     let v = String(val);
@@ -236,6 +252,8 @@ export default function App() {
     if (Number.isNaN(n)) n = 0;
     if (v.length > 1 && v.startsWith("0")) n = parseInt(v.replace(/^0+/, ""), 10) || 0;
     n = Math.max(0, n);
+    const stock = getProductStockById(products, id);
+    if (stock && n > stock) n = stock;
     setCart((prev) => prev.map((i) => (i.id === id ? { ...i, qty: n } : i)));
   }
   function removeFromCart(id) {
@@ -244,10 +262,12 @@ export default function App() {
 
   /* ----------- Товар / Модалка ----------- */
   const [productOpen, setProductOpen] = useState(null);
+  const [modalQtyStr, setModalQtyStr] = useState("1");
   const [activeImg, setActiveImg] = useState(0);
   function openProduct(p) {
     setProductOpen(p);
     setActiveImg(0);
+    setModalQtyStr("1");
   }
 
   /* ----------- Оформлення/замовлення ----------- */
@@ -258,76 +278,137 @@ export default function App() {
     phone: "", // лише 9 «національних» цифр
     delivery: "Нова пошта",
     agree: false,
-
-    // Нова Пошта
-    npCityText: "",
-    npCity: null, // {Ref, Present}
-    npType: "warehouse", // 'warehouse' | 'postomat'
-    npWarehouse: null, // {Ref, Number, Description}
   });
 
-  // --- НП: локальний стан списків
-  const [npCityOpts, setNpCityOpts] = useState([]); // [{Ref, Present}]
-  const [npWhOpts, setNpWhOpts] = useState([]); // [{Ref, Number, Description}]
+  // ============ Нова пошта: стани для підказок ============
+  const [npCityInput, setNpCityInput] = useState(""); // текст у полі "населений пункт"
+  const [npCityList, setNpCityList] = useState([]);  // масив міст
+  const [npCityOpen, setNpCityOpen] = useState(false);
+  const [npCity, setNpCity] = useState(null);        // {name, ref}
+
+  const [npType, setNpType] = useState("branch");    // 'branch' | 'postomat'
+
+  const [npWhInput, setNpWhInput] = useState("");    // текст у полі відділення/поштомат
+  const [npWhAll, setNpWhAll] = useState([]);        // всі відділення міста
+  const [npWhList, setNpWhList] = useState([]);      // відфільтровані
+  const [npWhOpen, setNpWhOpen] = useState(false);
+  const npWhBoxRef = useRef(null);
+
+  // автопошук міст
+  useEffect(() => {
+    if (!checkoutOpen) return;
+    const q = npCityInput.trim();
+    if (q.length < 2) {
+      setNpCityList([]);
+      setNpCityOpen(false);
+      return;
+    }
+    const t = setTimeout(async () => {
+      try {
+        const r = await fetch(`${API}/api/np/settlements?q=${encodeURIComponent(q)}`);
+        const data = await r.json();
+        setNpCityList(Array.isArray(data) ? data : []);
+        setNpCityOpen(true);
+      } catch {
+        setNpCityList([]);
+        setNpCityOpen(false);
+      }
+    }, 250);
+    return () => clearTimeout(t);
+  }, [npCityInput, checkoutOpen]);
+
+  // завантажити відділення/поштомати при виборі міста або зміні типу
+  useEffect(() => {
+    let ignore = false;
+    async function loadWh() {
+      if (!npCity?.ref) {
+        setNpWhAll([]);
+        setNpWhList([]);
+        return;
+      }
+      try {
+        const r = await fetch(
+          `${API}/api/np/warehouses?cityRef=${encodeURIComponent(npCity.ref)}&type=${npType}`
+        );
+        const data = await r.json();
+        if (!ignore) {
+          const arr = (Array.isArray(data) ? data : []).map((w) => ({
+            ref: w.ref || w.Ref,
+            number: String(w.number ?? w.Number ?? ""),
+            title: w.title || w.ShortAddress || w.Description || "",
+            type: w.type || w.TypeOfWarehouse || "",
+          }));
+          setNpWhAll(arr);
+          // початково показуємо все
+          setNpWhList(arr);
+          setNpWhOpen(false);
+        }
+      } catch {
+        if (!ignore) {
+          setNpWhAll([]);
+          setNpWhList([]);
+          setNpWhOpen(false);
+        }
+      }
+    }
+    loadWh();
+    return () => {
+      ignore = true;
+    };
+  }, [npCity?.ref, npType]);
+
+  // фільтр по номеру/адресі при вводі
+  useEffect(() => {
+    const term = npWhInput.trim().toLowerCase();
+    if (!term) {
+      setNpWhList(npWhAll);
+      return;
+    }
+    setNpWhList(
+      npWhAll.filter((w) => {
+        const s = `${w.number} ${w.title}`.toLowerCase();
+        return s.includes(term);
+      })
+    );
+  }, [npWhInput, npWhAll]);
+
+  // Закривати список відділень при кліку поза ним
+  useEffect(() => {
+    function onClick(e) {
+      if (!npWhBoxRef.current) return;
+      if (!npWhBoxRef.current.contains(e.target)) setNpWhOpen(false);
+    }
+    if (npWhOpen) document.addEventListener("mousedown", onClick);
+    return () => document.removeEventListener("mousedown", onClick);
+  }, [npWhOpen]);
 
   // Валідація
   const nameValid = /^[A-Za-zА-Яа-яЁёІіЇїЄєҐґ'’ -]{1,30}$/.test(order.name || "");
   const phoneValid = (order.phone || "").length === 9;
   const agreeValid = !!order.agree;
 
-  // Дебаунс-пошук населених пунктів (через бек-проксі, якщо доступна)
-  useEffect(() => {
-    let t = null;
-    if (order.delivery === "Нова пошта" && order.npCityText.trim().length >= 2) {
-      t = setTimeout(async () => {
-        const data = await npFetch("settlements", { q: order.npCityText.trim(), limit: 20 });
-        setNpCityOpts(Array.isArray(data) ? data : []);
-      }, 300);
-    } else {
-      setNpCityOpts([]);
-    }
-    return () => clearTimeout(t);
-  }, [order.delivery, order.npCityText]);
-
-  // Коли місто або тип змінюється — перезавантажити список відділень/почтоматів
-  useEffect(() => {
-    let cancelled = false;
-    async function run() {
-      if (order.delivery !== "Нова пошта" || !order.npCity?.Ref) {
-        setNpWhOpts([]);
-        return;
-      }
-      const type = order.npType || "warehouse";
-      const data = await npFetch("warehouses", { cityRef: order.npCity.Ref, type });
-      if (!cancelled) setNpWhOpts(Array.isArray(data) ? data : []);
-    }
-    run();
-    return () => {
-      cancelled = true;
-    };
-  }, [order.delivery, order.npCity, order.npType]);
-
   async function placeOrder() {
     if (!nameValid || !phoneValid || !agreeValid) return;
     if (cartItems.length === 0 || cartItems.some((i) => i.qty <= 0)) return;
 
-    // Формуємо людинозрозумілий текст доставки, щоб бекенд не міняти
-    let deliveryText = order.delivery;
-    if (order.delivery === "Нова пошта") {
-      const cityPart =
-        order.npCity?.Present || (order.npCityText ? order.npCityText.trim() : "");
-      const typeLabel = order.npType === "postomat" ? "Почтомат" : "Відділення";
-      const whPart = order.npWarehouse
-        ? `№${order.npWarehouse.Number} — ${order.npWarehouse.Description}`
-        : "";
-      const pieces = [cityPart, typeLabel, whPart].filter(Boolean);
-      if (pieces.length) deliveryText += " · " + pieces.join(", ");
+    // Формуємо зручний рядок доставки
+    let delivery = order.delivery;
+    if (delivery === "Нова пошта") {
+      const city = npCity?.name || npCityInput || "";
+      const wh =
+        npWhInput ||
+        (npWhList && npWhList.length
+          ? `${npType === "postomat" ? "Поштомат" : "Відділення"} №${
+              npWhList[0].number
+            } — ${npWhList[0].title}`
+          : "");
+      if (city || wh) delivery = `Нова пошта: ${city}${wh ? `, ${wh}` : ""}`;
     }
 
     const payload = {
       name: order.name.trim(),
       phone: `+380${order.phone}`,
-      delivery: deliveryText,
+      delivery,
       items: cartItems
         .filter((i) => i.qty > 0)
         .map((i) => ({
@@ -355,25 +436,22 @@ export default function App() {
   }
 
   function openCheckout() {
-    setOrder({
-      name: "",
-      phone: "",
-      delivery: "Нова пошта",
-      agree: false,
-      npCityText: "",
-      npCity: null,
-      npType: "warehouse",
-      npWarehouse: null,
-    });
+    setOrder({ name: "", phone: "", delivery: "Нова пошта", agree: false });
+    setNpCityInput("");
+    setNpCity(null);
+    setNpType("branch");
+    setNpWhInput("");
+    setNpWhAll([]);
+    setNpWhList([]);
     setOrderPlaced(false);
     setCheckoutOpen(true);
   }
 
   /* ===================== UI ===================== */
   return (
-    <div className="min-h-screen bg-neutral-950 text-neutral-100 overflow-x-hidden">
+    <div className="min-h-screen bg-neutral-950 text-neutral-100">
       {/* Header */}
-      <header className="sticky top-0 z-40 bg-neutral-950/60 backdrop-blur-md border-b border-neutral-800">
+      <header className="fixed top-0 inset-x-0 z-50 bg-neutral-950/60 backdrop-blur-md border-b border-neutral-800">
         <div className="mx-auto max-w-7xl px-4 py-3 flex items-center gap-4">
           <div className="flex items-center gap-2">
             <img src="/dh-logo.png" alt="Diesel Hub" className="h-8 w-8 object-contain" />
@@ -384,7 +462,7 @@ export default function App() {
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Пошук за номером, OEM, крос-номерами, брендом..."
+              placeholder="Пошук за номером, OEM, кросс-номерами, брендом..."
               className="w-full rounded-xl bg-neutral-900 border border-neutral-800 px-4 py-2 outline-none focus:border-yellow-400"
             />
           </div>
@@ -412,7 +490,9 @@ export default function App() {
         </div>
       </header>
 
-      {/* Hero / Плашка */}
+      
+        <div className="h-16 sm:h-20"></div>
+{/* Hero / Плашка */}
       <section className="border-b border-neutral-800">
         <div className="mx-auto max-w-7xl px-4 py-8 md:py-10 grid md:grid-cols-2 gap-6 items-center relative">
           <div>
@@ -429,7 +509,7 @@ export default function App() {
               <span className="block text-yellow-400">в наявності та з гарантією</span>
             </h1>
             <p className="mt-3 text-neutral-300">
-              Швидкий пошук за OEM і крос-номерами. Чесний стан: нове / відновлене. Відправка по
+              Швидкий пошук за OEM і кросс-номерами. Чесний стан: нове / відновлене. Відправка по
               Україні.
             </p>
           </div>
@@ -437,11 +517,11 @@ export default function App() {
             <div className="rounded-2xl border border-neutral-800 bg-gradient-to-br from-neutral-900 to-neutral-950 p-4 mt-3">
               <ul className="text-sm text-neutral-300 space-y-2 list-disc pl-5">
                 <li>
-                  Фільтр за типом, виробником, станом, <span className="text-neutral-100">наявністю</span>
+                  Фільтр за типом, виробником, станом, <span className="text-neutral-100 text-left">наявністю</span>
                 </li>
                 <li>
-                  Картка з номером, OEM, кросами,{" "}
-                  <span className="text-neutral-100">моделями авто</span> та гарантією
+                  Картка з номером, OEM, кросс-номерами,{" "}
+                  <span className="text-neutral-100 text-left">моделями авто</span> та гарантією
                 </li>
                 <li>Оформлення замовлення без реєстрації</li>
                 <li>Партнерським СТО — знижка 10%</li>
@@ -476,19 +556,10 @@ export default function App() {
               />
             </label>
             <label className="block">
-              <div className="text-sm mb-1">Крос-номери</div>
+              <div className="text-sm mb-1">Кросс-номери</div>
               <input
                 value={filters.cross}
                 onChange={(e) => setFilters((f) => ({ ...f, cross: e.target.value }))}
-                className="w-full rounded-lg bg-neutral-900 border border-neutral-800 px-3 py-2 text-sm outline-none focus:border-yellow-400"
-              />
-            </label>
-            <label className="block">
-              <div className="text-sm mb-1">Модель авто</div>
-              <input
-                value={filters.carModel}
-                onChange={(e) => setFilters((f) => ({ ...f, carModel: e.target.value }))}
-                placeholder="Напр.: Sprinter W906, Passat B7"
                 className="w-full rounded-lg bg-neutral-900 border border-neutral-800 px-3 py-2 text-sm outline-none focus:border-yellow-400"
               />
             </label>
@@ -651,16 +722,16 @@ export default function App() {
                     )}
                   </div>
                   <div className="text-sm text-neutral-300">
-                    OEM: <span className="text-neutral-100">{p.oem || "—"}</span>
+                    OEM Номер: <span className="text-neutral-100 text-left">{p.oem || "—"}</span>
                   </div>
                   <div className="text-sm text-neutral-300">
-                    Крос: <ExpandableList items={p.cross || []} max={3} />
+                    Кросс: <ExpandableList items={p.cross || []} max={2} />
                   </div>
                   <div className="text-sm text-neutral-300">
-                    Тип: <span className="text-neutral-100">{p.type}</span>
+                    Тип деталі: <span className="text-neutral-100 text-left">{p.type}</span>
                   </div>
                   <div className="text-sm text-neutral-300">
-                    Об'єм: <span className="text-neutral-100">{formatEngine(p.engine)}</span>
+                    Об'єм: <span className="text-neutral-100 text-left">{formatEngine(p.engine)}</span>
                   </div>
                   <div className="text-xs text-neutral-400">
                     {p.manufacturer} · {p.condition}
@@ -746,7 +817,7 @@ export default function App() {
             </div>
 
             {/* Показати ще */}
-            <div className="shrink-0">
+            <div className="overflow-hidden">
               <button
                 onClick={() => {
                   setMode("more");
@@ -814,7 +885,7 @@ export default function App() {
               {/* Info */}
               <div className="md:w-1/2 w-full">
                 <div className="flex items-start justify-between gap-3">
-                  <h2 className="text-xl font-bold">{productOpen.number}</h2>
+                  <h2 className="text-xl font-bold flex items-baseline gap-3">{productOpen.number}<span className="text-sm text-neutral-400 font-normal">{productOpen.manufacturer} · {productOpen.condition}</span></h2>
                   <button
                     onClick={() => setProductOpen(null)}
                     className="text-neutral-400 hover:text-neutral-200"
@@ -822,40 +893,34 @@ export default function App() {
                     Закрити
                   </button>
                 </div>
-                <div className="text-sm text-neutral-300 mt-1">
-                  OEM: <span className="text-neutral-100">{productOpen.oem || "—"}</span>
-                </div>
-                <div className="text-sm text-neutral-300">
-                  Крос: <ExpandableList items={productOpen.cross || []} max={3} />
-                </div>
-                <div className="text-sm text-neutral-300">
-                  Тип: <span className="text-neutral-100">{productOpen.type}</span>
-                </div>
-                <div className="text-sm text-neutral-300">
-                  Об'єм двигуна: <span className="text-neutral-100">{formatEngine(productOpen.engine)}</span>
-                </div>
-                <div className="text-sm text-neutral-300">
-                  Моделі авто: <ExpandableList items={productOpen.models || []} max={3} />
-                </div>
-                <div className="text-sm text-neutral-400 mt-1">
-                  {productOpen.manufacturer} · {productOpen.condition}
-                </div>
-                <div className="text-sm text-neutral-300 mt-1">
-                  Гарантія: <span className="text-neutral-100">{getWarranty()}</span>
-                  <a
-                    href="/#/warranty"
-                    className="ml-1 inline-flex items-center justify-center w-3 h-3 rounded-full border border-neutral-600 text-[8px] leading-none text-neutral-400 align-super hover:text-neutral-900 hover:bg-yellow-400 hover:border-yellow-400"
-                    title="Детальніше про гарантію"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    i
-                  </a>
-                </div>
-
-                <div className="flex items-center justify-between mt-4">
-                  <div className="text-2xl font-extrabold text-yellow-400">
+                <div className="mt-3 border border-neutral-800 rounded-xl overflow-hidden">
+  <div className="divide-y divide-neutral-800 text-sm">
+    <div className="flex flex-wrap items-baseline gap-2 px-3 py-2">
+      <span className="text-neutral-400 text-left">OEM Номер:</span>
+      <span className="text-neutral-100 text-left">{productOpen.oem || "—"}</span>
+    </div>
+    <div className="flex flex-wrap items-baseline gap-2 px-3 py-2">
+      <span className="text-neutral-400 text-left">Кросс номери:</span>
+      <span className="text-neutral-100 text-left"><ExpandableList items={productOpen.cross || []} max={2} /></span>
+    </div>
+    <div className="flex flex-wrap items-baseline gap-2 px-3 py-2">
+      <span className="text-neutral-400 text-left">Тип деталі:</span>
+      <span className="text-neutral-100 text-left">{productOpen.type}</span>
+    </div>
+    <div className="flex flex-wrap items-baseline gap-2 px-3 py-2">
+      <span className="text-neutral-400 text-left">Обʼєм двигуна</span>
+      <span className="text-neutral-100 text-left">{formatEngine(productOpen.engine)}</span>
+    </div>
+    <div className="flex flex-wrap items-baseline gap-2 px-3 py-2">
+      <span className="text-neutral-400 text-left">Гарантія</span>
+      <span className="text-neutral-100 text-left">{getWarranty()} <a href="/#/warranty" onClick={(e)=>e.stopPropagation()} className="ml-1 underline decoration-dotted hover:text-yellow-400">детальніше</a></span>
+    </div>
+  </div>
+</div>
+<div className="flex items-center justify-between mt-4">
+                  <div className="flex items-center gap-2"><span className="text-white font-semibold text-2xl"><span className="text-white font-semibold text-2xl">Ціна</span></span> <div className="text-2xl font-extrabold text-yellow-400">
                     {(productOpen.price || 0).toLocaleString("uk-UA")} ₴
-                  </div>
+                  </div></div>
                   {productOpen.availability === "В наявності" ? (
                     <span className="text-xs px-2 py-1 rounded-full border border-emerald-400 text-emerald-400">
                       В наявності · {productOpen.qty} шт
@@ -868,12 +933,37 @@ export default function App() {
                 </div>
 
                 <div className="flex gap-3 mt-5">
-                  <button
-                    onClick={() => addToCart(productOpen)}
-                    className="rounded-xl border border-yellow-500/60 text-yellow-300 hover:text-neutral-900 hover:bg-yellow-400 px-4 py-2"
-                  >
-                    Додати до кошика
-                  </button>
+                  <div className="flex items-center gap-3 mt-5">
+  <label className="text-white text-sm">Кількість:</label>
+  <input type="number"
+         min={1}
+         value={modalQtyStr}
+         onChange={(e)=>{
+           const raw = e.target.value; if (raw === "") { setModalQtyStr(""); return; }
+           let n = parseInt(raw,10); if (!Number.isFinite(n)) n = 0; n = Math.max(0,n);
+           const inCart = (cart.find(c=>c.id===productOpen?.id)?.qty || 0);
+           const stock = Math.max(0, Number(productOpen?.qty)||0);
+           const maxAdd = Math.max(0, stock - inCart);
+           if (maxAdd && n > maxAdd) n = maxAdd;
+           setModalQtyStr(String(n));
+         }}
+         className="w-20 bg-neutral-900 border border-neutral-800 rounded-lg px-2 py-1 text-sm" />
+  <button
+    onClick={() => {
+      const parsed = parseInt(modalQtyStr || "0", 10) || 0;
+      const inCart = (cart.find(c=>c.id===productOpen?.id)?.qty || 0);
+      const stock = Math.max(0, Number(productOpen?.qty)||0);
+      const maxAdd = Math.max(0, stock - inCart);
+      const addN = Math.min(Math.max(1, parsed), maxAdd || 0);
+      if (!addN) return;
+      addToCartN(productOpen, addN);
+    }}
+    disabled={(parseInt(modalQtyStr || "0", 10) || 0) < 1 || Math.max(0, (Number(productOpen?.qty)||0) - (cart.find(c=>c.id===productOpen?.id)?.qty || 0)) === 0}
+    className="rounded-xl border border-yellow-500/60 bg-yellow-400 text-neutral-950 hover:bg-yellow-300 hover:text-neutral-900 px-4 py-2 disabled:opacity-50 disabled:cursor-not-allowed"
+  >
+    Додати до кошика
+  </button>
+</div>
                 </div>
               </div>
             </div>
@@ -894,7 +984,7 @@ export default function App() {
             </div>
 
             {cartItems.length === 0 ? (
-              <div className="text-neutral-400">Кошик порожній</div>
+              <div className="text-neutral-400 text-left">Кошик порожній</div>
             ) : (
               <div className="space-y-4">
                 {cartItems.map((item) => (
@@ -914,8 +1004,16 @@ export default function App() {
                           <input
                             type="number"
                             min={0}
+                            max={getProductStockById(products, item.id) || undefined}
                             value={String(item.qty)}
-                            onChange={(e) => updateQty(item.id, e.target.value)}
+                            onChange={(e) => {
+                              const stock = getProductStockById(products, item.id);
+                              let n = parseInt(e.target.value || "0", 10);
+                              if (!Number.isFinite(n)) n = 0;
+                              if (stock && n > stock) n = stock;
+                              updateQty(item.id, String(n));
+                              if (String(n) !== e.target.value) e.target.value = String(n);
+                            }}
                             className="w-24 bg-neutral-900 border border-neutral-800 rounded-lg px-2 py-1 text-sm"
                           />
                           <button onClick={() => removeFromCart(item.id)} className="text-sm text-red-400 hover:text-red-300">
@@ -931,7 +1029,7 @@ export default function App() {
                 ))}
 
                 <div className="flex items-center justify-between border-t border-neutral-800 pt-3">
-                  <div className="text-neutral-400">Разом</div>
+                  <div className="text-neutral-400 text-left">Разом</div>
                   <div className="text-lg font-bold text-yellow-400">{cartTotal.toLocaleString("uk-UA")} ₴</div>
                 </div>
 
@@ -1007,17 +1105,12 @@ export default function App() {
                   </label>
                 </div>
 
-                {/* Доставка */}
+                {/* Доставка: Нова пошта */}
                 <label className="block">
                   <div className="text-sm mb-1">Спосіб доставки</div>
                   <select
                     value={order.delivery}
-                    onChange={(e) =>
-                      setOrder((o) => ({
-                        ...o,
-                        delivery: e.target.value,
-                      }))
-                    }
+                    onChange={(e) => setOrder((o) => ({ ...o, delivery: e.target.value }))}
                     className="w-full rounded-lg bg-neutral-900 border border-neutral-800 px-3 py-2 text-sm outline-none focus:border-yellow-400"
                   >
                     <option>Нова пошта</option>
@@ -1025,117 +1118,111 @@ export default function App() {
                   </select>
                 </label>
 
-                {/* Блок НП */}
                 {order.delivery === "Нова пошта" && (
-                  <div className="rounded-xl border border-neutral-800 p-3 space-y-3">
-                    {/* Місто */}
+                  <>
+                    {/* Населений пункт */}
                     <div className="relative">
                       <div className="text-sm mb-1">Населений пункт</div>
                       <input
-                        value={order.npCityText}
-                        onChange={(e) =>
-                          setOrder((o) => ({
-                            ...o,
-                            npCityText: e.target.value,
-                            npCity: null,
-                            npWarehouse: null,
-                          }))
-                        }
-                        placeholder="Напр.: Київ, Кропивницький..."
+                        value={npCityInput}
+                        onChange={(e) => {
+                          setNpCityInput(e.target.value);
+                          setNpCity(null);
+                          setNpWhAll([]);
+                          setNpWhList([]);
+                          setNpWhInput("");
+                        }}
+                        onFocus={() => npCityList.length && setNpCityOpen(true)}
+                        placeholder="Почніть вводити..."
                         className="w-full rounded-lg bg-neutral-900 border border-neutral-800 px-3 py-2 text-sm outline-none focus:border-yellow-400"
                       />
-                      {/* Підказки */}
-                      {npCityOpts.length > 0 && (
-                        <div className="absolute z-10 mt-1 w-full max-h-60 overflow-auto rounded-lg border border-neutral-800 bg-neutral-950 shadow-lg">
-                          {npCityOpts.map((c) => (
+                      {npCity && (
+                        <div className="mt-1 text-xs text-neutral-400">Обране місто: {npCity.name}</div>
+                      )}
+
+                      {npCityOpen && npCityList.length > 0 && (
+                        <div className="absolute left-0 right-0 top-[68px] z-[95] max-h-60 overflow-auto rounded-xl border border-neutral-800 bg-neutral-950 shadow-lg">
+                          {npCityList.map((c, idx) => (
                             <button
-                              key={c.Ref}
-                              onClick={() =>
-                                setOrder((o) => ({
-                                  ...o,
-                                  npCityText: c.Present || "",
-                                  npCity: c,
-                                  npWarehouse: null,
-                                }))
-                              }
-                              className="block w-full text-left px-3 py-2 text-sm hover:bg-neutral-900"
+                              key={idx}
+                              onMouseDown={(e) => {
+                                e.preventDefault();
+                                setNpCity({ name: c.Present || c.name || "", ref: c.Ref || c.settlementRef || c.DeliveryCity || "" });
+                                setNpCityInput(c.Present || c.name || "");
+                                setNpCityOpen(false);
+                              }}
+                              className="w-full text-left px-3 py-2 hover:bg-neutral-800"
                             >
-                              {c.Present}
+                              {c.Present || c.name}
                             </button>
                           ))}
                         </div>
                       )}
-                      {order.npCityText && npCityOpts.length === 0 && (
-                        <div className="mt-1 text-xs text-neutral-500">
-                          Підказки недоступні — можна ввести вручну.
+                    </div>
+
+                    {/* Тип отримання */}
+                    <div className="flex items-center gap-4">
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="radio"
+                          name="np-type"
+                          checked={npType === "branch"}
+                          onChange={() => setNpType("branch")}
+                        />
+                        <span>Відділення</span>
+                      </label>
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="radio"
+                          name="np-type"
+                          checked={npType === "postomat"}
+                          onChange={() => setNpType("postomat")}
+                        />
+                        <span>Поштомат</span>
+                      </label>
+                    </div>
+
+                    {/* Відділення / Поштомат */}
+                    <div className="relative" ref={npWhBoxRef}>
+                      <div className="text-sm mb-1">Відділення / Поштомат</div>
+                      <input
+                        value={npWhInput}
+                        onChange={(e) => {
+                          setNpWhInput(e.target.value);
+                          setNpWhOpen(true);
+                        }}
+                        onFocus={() => setNpWhOpen(true)}
+                        placeholder="№ відділення / поштомату або адреса"
+                        className="w-full rounded-lg bg-neutral-900 border border-neutral-800 px-3 py-2 text-sm outline-none focus:border-yellow-400"
+                      />
+                      {npWhOpen && npWhList.length > 0 && (
+                        <div className="absolute left-0 right-0 top-[68px] z-[96] max-h-64 overflow-auto rounded-xl border border-neutral-800 bg-neutral-950 shadow-lg">
+                          {npWhList.map((w, idx) => (
+                            <button
+                              key={w.ref || idx}
+                              onMouseDown={(e) => {
+                                e.preventDefault();
+                                const label = `${npType === "postomat" ? "Поштомат" : "Відділення"} №${w.number} — ${w.title}`;
+                                setNpWhInput(label);
+                                setNpWhOpen(false);
+                              }}
+                              className="w-full text-left px-3 py-2 hover:bg-neutral-800"
+                            >
+                              <div className="font-medium">
+                                {npType === "postomat" ? "Поштомат" : "Відділення"} №{w.number}
+                              </div>
+                              <div className="text-xs text-neutral-400">{w.title}</div>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      {npWhOpen && npWhList.length === 0 && (
+                        <div className="absolute left-0 right-0 top-[68px] z-[96] rounded-xl border border-neutral-800 bg-neutral-950 p-3 text-sm text-neutral-400">
+                          Немає підказок — введіть номер або адресу.
                         </div>
                       )}
                     </div>
-
-                    {/* Тип: відділення / почтомат */}
-                    <div className="text-sm">
-                      <div className="mb-1">Тип отримання</div>
-                      <div className="flex items-center gap-4">
-                        <label className="inline-flex items-center gap-2">
-                          <input
-                            type="radio"
-                            name="npType"
-                            checked={order.npType === "warehouse"}
-                            onChange={() => setOrder((o) => ({ ...o, npType: "warehouse", npWarehouse: null }))}
-                          />
-                          Відділення
-                        </label>
-                        <label className="inline-flex items-center gap-2">
-                          <input
-                            type="radio"
-                            name="npType"
-                            checked={order.npType === "postomat"}
-                            onChange={() => setOrder((o) => ({ ...o, npType: "postomat", npWarehouse: null }))}
-                          />
-                          Почтомат
-                        </label>
-                      </div>
-                    </div>
-
-                    {/* Номер відділення/почтомату: якщо є список — селект, інакше інпут */}
-                    <div className="text-sm">
-                      <div className="mb-1">
-                        {order.npType === "postomat" ? "Почтомат" : "Відділення"}
-                      </div>
-                      {npWhOpts.length > 0 ? (
-                        <select
-                          value={order.npWarehouse?.Ref || ""}
-                          onChange={(e) => {
-                            const found = npWhOpts.find((w) => w.Ref === e.target.value) || null;
-                            setOrder((o) => ({ ...o, npWarehouse: found }));
-                          }}
-                          className="w-full rounded-lg bg-neutral-900 border border-neutral-800 px-3 py-2 text-sm outline-none focus:border-yellow-400"
-                        >
-                          <option value="">Оберіть...</option>
-                          {npWhOpts.map((w) => (
-                            <option key={w.Ref} value={w.Ref}>
-                              №{w.Number} — {w.Description}
-                            </option>
-                          ))}
-                        </select>
-                      ) : (
-                        <input
-                          value={order.npWarehouse?.Number || ""}
-                          onChange={(e) =>
-                            setOrder((o) => ({
-                              ...o,
-                              npWarehouse: { Number: e.target.value, Description: "" },
-                            }))
-                          }
-                          placeholder="№ відділення / почтомату"
-                          className="w-full rounded-lg bg-neutral-900 border border-neutral-800 px-3 py-2 text-sm outline-none focus:border-yellow-400"
-                        />
-                      )}
-                      <div className="mt-1 text-xs text-neutral-500">
-                        Якщо список не зʼявився — введіть номер вручну.
-                      </div>
-                    </div>
-                  </div>
+                  </>
                 )}
 
                 <label className="flex items-start gap-2 text-sm text-neutral-300">

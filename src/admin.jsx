@@ -49,7 +49,23 @@ export default function AdminPanel() {
   const [err, setErr] = useState("");
 
   /* --- список товаров --- */
+  async function patchProduct(id, patch) {
+    const r = await fetch(`${API}/api/admin/product/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", "x-admin-token": token },
+      body: JSON.stringify(patch),
+    });
+    return r.ok;
+  }
+  async function changeQty(id, delta) {
+    const p = products.find(x=>x.id===id);
+    const next = Math.max(0, (Number(p?.qty)||0) + delta);
+    const ok = await patchProduct(id, { qty: next });
+    if (ok) setProducts(prev=>prev.map(x=> x.id===id ? { ...x, qty: next } : x));
+  }
+
   const [products, setProducts] = useState([]);
+  const [search, setSearch] = useState("");
 
   async function loadProducts() {
     try {
@@ -63,6 +79,14 @@ export default function AdminPanel() {
   useEffect(() => {
     loadProducts();
   }, []);
+  const filteredProducts = useMemo(() => {
+    const q = (search || "").trim().toLowerCase();
+    if (!q) return products;
+    return products.filter((p) => {
+      const hay = `${p.number || ""} ${p.oem || ""}`.toLowerCase();
+      return hay.includes(q);
+    });
+  }, [products, search]);
 
   /* --- форма добавления --- */
   const [f, setF] = useState({
@@ -426,8 +450,32 @@ export default function AdminPanel() {
             </button>
           </div>
 
+
+
+          <div className="mb-3 flex items-center gap-2">
+            <input
+              placeholder="Пошук за номером / OEM"
+              value={search}
+              onChange={(e)=>setSearch(e.target.value)}
+              className="w-full rounded-lg bg-neutral-900 border border-neutral-800 px-3 py-2 text-sm outline-none focus:border-yellow-400"
+            />
+          </div>
           <div className="space-y-3 max-h-[70vh] overflow-y-auto pr-1">
-            {products.map((p) => (
+            {filteredProducts.map((p) => (
+
+
+
+
+
+
+
+
+
+
+
+
+
+
               <div key={p.id} className="rounded-xl border border-neutral-800 p-3">
                 <div className="flex items-center justify-between gap-3">
                   <div className="min-w-0">
@@ -473,6 +521,10 @@ export default function AdminPanel() {
                       )
                     }
                   />
+                  <div className="flex items-center gap-2 mt-1">
+                    <button onClick={()=>changeQty(p.id, -1)} className="px-2 py-1 rounded-lg border border-neutral-700 hover:border-yellow-400">-1</button>
+                    <button onClick={()=>changeQty(p.id, +1)} className="px-2 py-1 rounded-lg border border-neutral-700 hover:border-yellow-400">+1</button>
+                  </div>
                   <label className="block">
                     <div className="text-sm mb-1">Наявність</div>
                     <select
