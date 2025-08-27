@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "web": "vite",
-    "api": "node --env-file=.env server.mjs",
-    "dev:all": "concurrently -n web,api -c green,cyan \"vite\" \"node --env-file=.env server.mjs\"",
+    "api": "node --env-file=.env.local server.mjs",
+    "dev:all": "concurrently -n web,api -c green,cyan \"vite\" \"node --env-file=.env.local server.mjs\"",
     "build": "vite build",
     "preview": "vite preview"
   },

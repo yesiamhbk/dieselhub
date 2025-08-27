@@ -278,6 +278,191 @@ export default function AdminPanel() {
     );
   }
 
+  
+  /* ===== експорт/імпорт ===== */
+  async function downloadAdmin(url, filename) {
+    try {
+      const r = await fetch(`${API}${url}`, { headers: { "x-admin-token": token } });
+      if (!r.ok) {
+        const e = await r.json().catch(() => ({}));
+        alert(e.error || "Помилка при завантаженні");
+        return;
+      }
+      const blob = await r.blob();
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    } catch {
+      alert("Не вдалося завантажити файл");
+    }
+  }
+  const exportCSV = () => downloadAdmin("/api/admin/export.csv", "products.csv");
+  const exportJSON = () => downloadAdmin("/api/admin/export.json", "products.json");
+
+  async function handleImportFile(file) {
+    if (!file) return;
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      // dry-run спочатку
+      let r = await fetch(`${API}/api/admin/import?dryRun=1&mode=upsert`, {
+        method: "POST",
+        headers: { "x-admin-token": token },
+        body: fd,
+      });
+      const preview = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        alert("Помилка під час перевірки: " + (preview.error || "невідома"));
+        return;
+      }
+      if (Array.isArray(preview.errors) && preview.errors.length) {
+        const first = preview.errors.slice(0, 5).map(e => `рядок ${e.row}: ${e.error}`).join("\n");
+        alert(`Знайдено помилки (${preview.errors.length}):\n${first}${preview.errors.length>5 ? "\n..." : ""}`);
+        return;
+      }
+      const ok = confirm(`Імпортувати?\nУсього: ${preview.total}\nОновиться: ~${preview.updated}\nДодасться: ~${preview.created}`);
+      if (!ok) return;
+      // реальний імпорт
+      r = await fetch(`${API}/api/admin/import?dryRun=0&mode=upsert`, {
+        method: "POST",
+        headers: { "x-admin-token": token },
+        body: fd,
+      });
+      const rep = await r.json().catch(() => ({}));
+      if (!r.ok || rep.error) {
+        alert("Помилка імпорту: " + (rep.error || "невідома"));
+        return;
+      }
+      alert(`Готово. Оновлено: ${rep.updated || 0}, Додано: ${rep.created || 0}`);
+      await loadProducts();
+    } catch (e) {
+      alert("Не вдалося імпортувати файл");
+    } finally {
+      const el = document.getElementById("admin-import-file");
+      if (el) el.value = "";
+    }
+  }
+    
+  
+  /* === КОПИРОВАНИЕ В GOOGLE SHEETS (TSV) И ВСТАВКА ИЗ SHEETS === */
+  const COLS = ["id","number","oem","cross","manufacturer","condition","type","engine","availability","qty","price","images"];
+
+  const normKey = (s) => String(s || "").toUpperCase().replace(/[\s\-_.]/g, "");
+
+  function shapeForExportLocal(p) {
+    return {
+      id: p.id ?? "",
+      number: p.number ?? "",
+      oem: p.oem ?? "",
+      cross: Array.isArray(p.cross) ? p.cross.join("|") : (p.cross ?? ""),
+      manufacturer: p.manufacturer ?? "",
+      condition: p.condition ?? "",
+      type: p.type ?? "",
+      engine: p.engine ?? "",
+      availability: p.availability ?? "",
+      qty: p.qty ?? 0,
+      price: p.price ?? 0,
+      images: Array.isArray(p.images) ? p.images.join("|") : (p.images ?? ""),
+    };
+  }
+
+  function makeTSVFromProducts() {
+    const rows = (products || []).map(shapeForExportLocal);
+    if (!rows.length) return "";
+    const head = COLS.join("\t");
+    const esc = (v) => String(v == null ? "" : v).replace(/\t/g, " ").replace(/\r?\n/g, " ");
+    const body = rows.map(r => COLS.map(k => esc(r[k])).join("\t")).join("\n");
+    return head + "\n" + body;
+  }
+
+  async function exportCSVToClipboard() {
+    const tsv = makeTSVFromProducts();
+    if (!tsv) { alert("Список порожній"); return; }
+    await navigator.clipboard.writeText(tsv);
+    alert("Скопійовано — просто вставляйте у Google Sheets (Cmd/Ctrl+V).");
+  }
+
+  function parseClipboardTable(text) {
+    const raw = String(text || "").replace(/\r\n?/g, "\n").trim();
+    if (!raw) return [];
+    const delim = raw.includes("\t") ? "\t" : (raw.includes(";") && !raw.includes(",") ? ";" : ",");
+    const lines = raw.split("\n").filter(l => l.trim().length);
+    const rows = lines.map(l => l.split(delim).map(s => s.replace(/^"|"$|^'|'$/g, "").trim()));
+    if (!rows.length) return [];
+    const header = rows[0].map(h => h.trim().toLowerCase());
+    const idx = {}; COLS.forEach(c => idx[c] = header.indexOf(c));
+    let start = 1;
+    if (idx["number"] === -1 && idx["oem"] === -1) {
+      start = 0;
+      COLS.forEach((c, i) => idx[c] = i < rows[0].length ? i : -1);
+    }
+    const items = [];
+    for (let r = start; r < rows.length; r++) {
+      const row = rows[r]; const o = {};
+      for (const k of COLS) { const j = idx[k]; o[k] = j >= 0 ? (row[j] ?? "") : ""; }
+      if (o.number || o.oem) items.push(o);
+    }
+    return items;
+  }
+
+  async function importFromClipboard() {
+    try {
+      let text = "";
+      if (navigator.clipboard?.readText) text = await navigator.clipboard.readText();
+      if (!text) text = prompt("Вставте сюди дані з Google Sheets (CSV/TSV):", "");
+      if (!text) return;
+
+      const rows = parseClipboardTable(text);
+      if (!rows.length) { alert("Немає даних для імпорту"); return; }
+
+      const toPayload = (r) => ({
+        number: r.number || "",
+        oem: r.oem || "",
+        cross: String(r.cross || "").split(/[|,]/).map(s => s.trim()).filter(Boolean),
+        manufacturer: r.manufacturer || "",
+        condition: r.condition || "",
+        type: r.type || "",
+        availability: r.availability || "",
+        qty: Number(r.qty) || 0,
+        price: Number(r.price) || 0,
+        engine: (r.engine === "" || r.engine == null) ? null : Number(r.engine),
+        images: String(r.images || "").split("|").map(s => s.trim()).filter(Boolean),
+      });
+
+      let updated = 0, created = 0, failed = 0;
+      for (const r of rows) {
+        const payload = toPayload(r);
+        let targetId = r.id ? Number(r.id) : null;
+        if (!targetId) {
+          const rn = normKey(r.number), ro = normKey(r.oem);
+          const found = (products || []).find(p => (rn && normKey(p.number) === rn) || (ro && normKey(p.oem) === ro));
+          if (found) targetId = found.id;
+        }
+        try {
+          if (targetId) {
+            const ok = await patchProduct(targetId, payload);
+            if (ok) updated++; else failed++;
+          } else {
+            const resp = await fetch(`${API}/api/admin/product`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", "x-admin-token": token },
+              body: JSON.stringify(payload),
+            });
+            if (resp.ok) created++; else failed++;
+          }
+        } catch(e) { failed++; }
+      }
+      alert(`Готово. Оновлено: ${updated}, Додано: ${created}, Помилок: ${failed}`);
+      await loadProducts();
+    } catch (e) {
+      alert("Не вдалося імпортувати з буфера");
+    }
+  }
+
   /* ===== основной UI ===== */
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100">
@@ -285,6 +470,12 @@ export default function AdminPanel() {
         <div className="mx-auto max-w-7xl px-4 py-3 flex items-center justify-between">
           <div className="font-bold">Адмін-панель · Diesel Hub</div>
           <div className="flex items-center gap-2">
+            <button onClick={exportCSV} className="rounded-lg border border-neutral-700 px-3 py-1.5 text-sm hover:border-yellow-400">Експорт CSV</button>
+            <button onClick={exportJSON} className="rounded-lg border border-neutral-700 px-3 py-1.5 text-sm hover:border-yellow-400">Експорт JSON</button>
+            <button onClick={exportCSVToClipboard} className="rounded-lg border border-neutral-700 px-3 py-1.5 text-sm hover:border-yellow-400">Копіювати CSV</button>
+            <button onClick={importFromClipboard} className="rounded-lg border border-neutral-700 px-3 py-1.5 text-sm hover:border-yellow-400">Вставити з таблиці</button>
+            <input id="admin-import-file" type="file" accept=".csv,.json" className="hidden" onChange={(e)=>handleImportFile(e.target.files?.[0])} />
+            <label htmlFor="admin-import-file" className="cursor-pointer rounded-lg border border-neutral-700 px-3 py-1.5 text-sm hover:border-yellow-400">Імпорт</label>
             <a href="/#/" className="text-sm text-neutral-300 hover:text-yellow-400">
               ← до магазину
             </a>

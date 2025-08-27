@@ -363,7 +363,89 @@ app.get("/api/nova/cies", (req, res) => res.redirect(307, `/api/np/settlements?$
 app.get("/api/nova/cities", (req, res) => res.redirect(307, `/api/np/settlements?${new URLSearchParams(req.query).toString()}`));
 app.get("/api/nova/warehouses", (req, res) => res.redirect(307, `/api/np/warehouses?${new URLSearchParams(req.query).toString()}`));
 
+
+/* ======== IMPORT/EXPORT (CSV/JSON) — ADMIN ONLY ======== */
+function normalizeKey(s){return String(s||"").toUpperCase().replace(/[\s\-_.]/g,"");}
+function parseCSV(text){
+  const delim=(text.indexOf(";")>-1&&text.indexOf(",")==-1)?";":",";
+  const lines=text.replace(/\r\n?/g,"\n").split("\n");
+  if(!lines.length)return[];
+  const header=(lines.shift()||"").split(delim).map(h=>h.trim());
+  const rows=[];
+  for(const raw of lines){ if(!raw||!raw.trim())continue;
+    const parts=raw.split(delim).map(x=>x.replace(/^"|"$|^'|'$/g,"").trim());
+    const o={}; header.forEach((h,i)=>o[h]=parts[i]??""); rows.push(o);
+  } return rows;
+}
+function csvStringify(rows){
+  if(!Array.isArray(rows)||!rows.length)return"";
+  const header=Object.keys(rows[0]); const esc=v=>{const s=(v==null?"":String(v)); return (s.includes(",")||s.includes(";")||s.includes("\n")||s.includes('"'))?'"'+s.replace(/"/g,'""')+'"':s;};
+  const out=[header.join(",")]; for(const r of rows) out.push(header.map(k=>esc(r[k])).join(",")); return out.join("\n");
+}
+async function fetchAllProducts(){ const {data,error}=await supaAdmin.from("products").select("*").order("id",{ascending:true}); if(error) throw error; return data||[]; }
+function shapeForExport(p){ return { id:p.id??"", number:p.number??"", oem:p.oem??"", cross:Array.isArray(p.cross)?p.cross.join("|"):"", manufacturer:p.manufacturer??"", condition:p.condition??"", type:p.type??"", engine:p.engine??"", availability:p.availability??"", qty:p.qty??0, price:p.price??0, images:Array.isArray(p.images)?p.images.join("|"):"" }; }
+const ALLOWED_CONDITIONS=new Set(["Нове","Відновлене"]); const ALLOWED_TYPES=new Set(["Форсунка","ТНВД","Клапан"]); const ALLOWED_AVAIL=new Set(["В наявності","Під замовлення"]);
+function shapeIncoming(o){ const out={ id:o.id??null, number:(o.number??"").trim(), oem:(o.oem??"").trim(), cross:Array.isArray(o.cross)?o.cross:String(o.cross||"").split("|").map(s=>s.trim()).filter(Boolean), manufacturer:(o.manufacturer??"").trim(), condition:(o.condition??"").trim(), type:(o.type??"").trim(), engine:(o.engine===""||o.engine==null)?null:Number(o.engine), availability:(o.availability??"").trim(), qty:(o.qty===""||o.qty==null)?0:parseInt(o.qty,10), price:(o.price===""||o.price==null)?0:Number(o.price), images:Array.isArray(o.images)?o.images:String(o.images||"").split("|").map(s=>s.trim()).filter(Boolean)}; if(!Number.isFinite(out.engine)) out.engine=null; if(!Number.isFinite(out.price)) out.price=0; if(!Number.isInteger(out.qty)||out.qty<0) out.qty=0; return out; }
+function validateItem(item){ const errors=[]; if(!item.number&&!item.oem) errors.push("должен быть number или oem"); if(item.condition&&!ALLOWED_CONDITIONS.has(item.condition)) errors.push("condition должен быть 'Нове' или 'Відновлене'"); if(item.type&&!ALLOWED_TYPES.has(item.type)) errors.push("type должен быть 'Форсунка' | 'ТНВД' | 'Клапан'"); if(item.availability&&!ALLOWED_AVAIL.has(item.availability)) errors.push("availability должен быть 'В наявності' | 'Під замовлення'"); if(item.price<0) errors.push("price не может быть отрицательным"); if(item.qty<0) errors.push("qty не может быть отрицательным"); return errors; }
+async function findExistingId(item){ if(item.id) return item.id; const keys=[]; if(item.number) keys.push(normalizeKey(item.number)); if(item.oem) keys.push(normalizeKey(item.oem)); if(!keys.length) return null; const or=keys.map(k=>`number.ilike.%${k}%`).concat(keys.map(k=>`oem.ilike.%${k}%`)).join(","); const {data,error}=await supaAdmin.from("products").select("id,number,oem").or(or).limit(50); if(error||!data||!data.length) return null; for(const p of data){ if((p.number&&normalizeKey(p.number)===normalizeKey(item.number))||(p.oem&&normalizeKey(p.oem)===normalizeKey(item.oem))) return p.id; } return data[0].id; }
+
+app.get("/api/admin/export.json", requireAdmin, async (_req,res)=>{
+  try{ const items=await fetchAllProducts(); res.setHeader("Content-Type","application/json; charset=utf-8"); res.setHeader("Content-Disposition","attachment; filename=products.json"); res.json(items.map(shapeForExport)); }
+  catch(e){ console.error("[GET /api/admin/export.json] error:", e); res.status(500).json({error:String(e.message||e)}); }
+});
+
+app.get("/api/admin/export.csv", requireAdmin, async (_req,res)=>{
+  try{ const items=await fetchAllProducts(); const csv=csvStringify(items.map(shapeForExport)); res.setHeader("Content-Type","text/csv; charset=utf-8"); res.setHeader("Content-Disposition","attachment; filename=products.csv"); res.send(csv); }
+  catch(e){ console.error("[GET /api/admin/export.csv] error:", e); res.status(500).json({error:String(e.message||e)}); }
+});
+
+const uploadOne = multer({ storage: multer.memoryStorage() });
+app.post("/api/admin/import", requireAdmin, uploadOne.single("file"), async (req,res)=>{
+  try{
+    const dryRun=String(req.query.dryRun||req.body?.dryRun||"0")==="1";
+    const mode=String(req.query.mode||req.body?.mode||"upsert"); // upsert | replace
+    let rows=[];
+    if(req.file?.buffer){
+      const text=req.file.buffer.toString("utf8");
+      rows = (/^\s*\[/.test(text)) ? JSON.parse(text) : parseCSV(text);
+    }else if(Array.isArray(req.body)){ rows=req.body; }
+      else if(req.body && Array.isArray(req.body.items)){ rows=req.body.items; }
+      else { return res.status(400).json({error:"нет данных для импорта"}); }
+
+    const items=rows.map(shapeIncoming);
+    const report={updated:0, created:0, replaced:0, errors:[], total:items.length};
+
+    const seen=new Set();
+    for(let i=0;i<items.length;i++){
+      const it=items[i];
+      const key=normalizeKey(it.number||it.oem||("ROW"+i));
+      if(seen.has(key)) report.errors.push({row:i+1, error:"дубль в файле по number/oem"});
+      seen.add(key);
+      const errs=validateItem(it); if(errs.length) report.errors.push({row:i+1, error:errs.join("; ")});
+    }
+    if(report.errors.length && !dryRun) return res.status(400).json({ok:false, ...report});
+
+    if(mode==="replace" && !dryRun){
+      const {error:delErr}=await supaAdmin.from("products").delete().neq("id",-1);
+      if(delErr) throw delErr; report.replaced=1;
+    }
+
+    if(!dryRun){
+      for(let i=0;i<items.length;i++){
+        const it=items[i]; const id=await findExistingId(it);
+        const payload={...it}; delete payload.id;
+        if(id){
+          const {error}=await supaAdmin.from("products").update(payload).eq("id", id);
+          if(error) report.errors.push({row:i+1, error:String(error.message||error)}); else report.updated++;
+        } else {
+          const {error}=await supaAdmin.from("products").insert(payload);
+          if(error) report.errors.push({row:i+1, error:String(error.message||error)}); else report.created++;
+        }
+      }
+    }
+    res.json({ok:true, mode, dryRun, ...report});
+  }catch(e){ console.error("[POST /api/admin/import] error:", e); res.status(500).json({error:String(e.message||e)}); }
+});
+
 /* === ВАЖНО ДЛЯ RENDER === */
-app.listen(process.env.PORT || 8787, "0.0.0.0", () =>
-  console.log(`API server on http://localhost:${process.env.PORT || 8787}`)
-);
+app.listen(process.env.PORT || 10000, "0.0.0.0", () => { console.log("API server listening on port", process.env.PORT || 10000); });

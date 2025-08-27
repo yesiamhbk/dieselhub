@@ -1,12 +1,20 @@
-// vite.config.js
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   plugins: [react()],
   server: {
+    host: true,
     proxy: {
-      '/api': { target: 'http://localhost:8787', changeOrigin: true },
-    },
-  },
+      // проксируем и /api, и /products → на сервер 10000 (IPv4!)
+      '^/(api|products)(/|$)': {
+        target: 'http://127.0.0.1:10000',
+        changeOrigin: true,
+        secure: false,
+        // увеличить таймауты, чтобы большой JSON не ронял прокси
+        proxyTimeout: 30000,
+        timeout: 30000,
+      }
+    }
+  }
 })

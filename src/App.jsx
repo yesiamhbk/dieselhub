@@ -133,37 +133,57 @@ export default function App() {
   );
 
   const filtered = useMemo(() => {
+    // Raw query (for legacy contains checks) and normalized query (for "real-life" part numbers)
     const q = query.trim().toLowerCase();
+    const normalize = (s) => String(s || "").toUpperCase().replace(/[\s\-_.]/g, "");
+    const qn = normalize(query);
+
     const has = (str, q) => String(str || "").toLowerCase().includes(q);
+    const hasN = (str, nq) => normalize(str).includes(nq);
+
     return products.filter((p) => {
+      // Keep existing filter buckets as-is
       if (filters.brand.size && !filters.brand.has(p.manufacturer)) return false;
       if (filters.condition.size && !filters.condition.has(p.condition)) return false;
       if (filters.type.size && !filters.type.has(p.type)) return false;
       if (filters.availability.size && !filters.availability.has(p.availability)) return false;
       if (filters.engine.size && !filters.engine.has(p.engine)) return false;
 
+      // Number filter (exact input field "Номер")
       if (filters.number) {
-        const n = filters.number.toLowerCase();
-        const match = has(p.number, n) || (p.cross || []).some((c) => has(c, n));
+        const n = normalize(filters.number);
+        const match =
+          hasN(p.number, n) ||
+          hasN(p.oem, n) ||
+          (p.cross || []).some((c) => hasN(c, n));
         if (!match) return false;
       }
-      if (filters.oem && !has(p.oem, filters.oem)) return false;
-      if (filters.cross && !(p.cross || []).some((c) => has(c, filters.cross))) return false;if (!q) return true;
-      return (
-        has(p.number, q) ||
-        has(p.oem, q) ||
-        (p.cross || []).some((c) => has(c, q)) ||
+
+      // OEM and Cross filters (side filters) — support normalized includes too
+      if (filters.oem && !(has(p.oem, filters.oem) || hasN(p.oem, normalize(filters.oem)))) return false;
+      if (
+        filters.cross &&
+        !(p.cross || []).some((c) => has(c, filters.cross) || hasN(c, normalize(filters.cross)))
+      ) return false;
+
+      // Free text search — if empty, pass
+      if (!q && !qn) return true;
+
+      // Match either legacy (human-readable) or normalized (ignoring separators)
+      const textMatch =
+        has(p.number, q) || hasN(p.number, qn) ||
+        has(p.oem, q) || hasN(p.oem, qn) ||
+        (p.cross || []).some((c) => has(c, q) || hasN(c, qn)) ||
         has(p.manufacturer, q) ||
         has(p.condition, q) ||
         has(p.type, q) ||
         has(String(p.engine), q) ||
         (p.models || []).some((m) => has(m, q)) ||
-        has(p.availability, q)
-      );
-    });
-  }, [query, filters, products]);
+        has(p.availability, q);
 
-  /* ----------- Пагінація / Показати ще ----------- */
+      return textMatch;
+    });
+  }, [query, filters, products]);/* ----------- Пагінація / Показати ще ----------- */
   const PAGE_SIZE = 9;
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const [page, setPage] = useState(1);
@@ -262,15 +282,84 @@ export default function App() {
 
   /* ----------- Товар / Модалка ----------- */
   const [productOpen, setProductOpen] = useState(null);
+  // URL sharing flag
+  const startedWithParamRef = useRef(false);
   const [modalQtyStr, setModalQtyStr] = useState("1");
   const [activeImg, setActiveImg] = useState(0);
   function openProduct(p) {
     setProductOpen(p);
     setActiveImg(0);
     setModalQtyStr("1");
+    // Добавляем ?p=<id> в адресную строку для шеринга
+    try {
+      const url = new URL(window.location.href);
+      if (url.searchParams.get("p") !== String(p.id)) {
+        url.searchParams.set("p", String(p.id));
+        window.history.pushState({ p: String(p.id) }, "", url.toString());
+      }
+    } catch {}
   }
 
-  /* ----------- Оформлення/замовлення ----------- */
+  
+  // Закрытие модалки + синхронизация URL
+  function closeProduct() {
+    try {
+      const url = new URL(window.location.href);
+      const hadParam = url.searchParams.has("p");
+      setProductOpen(null);
+      if (hadParam) {
+        if (startedWithParamRef.current) {
+          url.searchParams.delete("p");
+          const qs = url.searchParams.toString();
+          const clean = url.pathname + (qs ? "?" + qs : "") + url.hash;
+          window.history.replaceState({}, "", clean);
+          startedWithParamRef.current = false;
+        } else {
+          window.history.back();
+        }
+      }
+    } catch {}
+  }
+
+  // Автооткрытие по ?p=<id> при загрузке
+  useEffect(() => {
+    try {
+      const url = new URL(window.location.href);
+      startedWithParamRef.current = url.searchParams.has("p");
+      const pid = url.searchParams.get("p");
+      if (pid && Array.isArray(products) && products.length) {
+        const found = products.find((pp) => String(pp.id) === String(pid));
+        if (found) {
+          setProductOpen(found);
+          setActiveImg(0);
+          setModalQtyStr("1");
+        }
+      }
+    } catch {}
+  }, [products]);
+
+  // Поддержка кнопок «Назад/Вперед»
+  useEffect(() => {
+    const onPop = () => {
+      try {
+        const url = new URL(window.location.href);
+        const pid = url.searchParams.get("p");
+        if (pid) {
+          const found = products.find((pp) => String(pp.id) === String(pid));
+          if (found) {
+            setProductOpen(found);
+            setActiveImg(0);
+            setModalQtyStr("1");
+            return;
+          }
+        }
+        setProductOpen(null);
+      } catch {}
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, [products]);
+/* ----------- Оформлення/замовлення ----------- */
   const [checkoutOpen, setCheckoutOpen] = useState(false);
   const [orderPlaced, setOrderPlaced] = useState(false);
   const [order, setOrder] = useState({
@@ -841,7 +930,7 @@ export default function App() {
       {/* Product Modal */}
       {productOpen && (
         <div className="fixed inset-0 z-[60]">
-          <div className="absolute inset-0 bg-black/60" onClick={() => setProductOpen(null)} />
+          <div className="absolute inset-0 bg-black/60" onClick={closeProduct} />
           <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-4xl rounded-2xl border border-neutral-800 bg-neutral-950 p-5">
             <div className="flex items-start gap-6 flex-col md:flex-row">
               {/* Gallery */}
@@ -887,7 +976,7 @@ export default function App() {
                 <div className="flex items-start justify-between gap-3">
                   <h2 className="text-xl font-bold flex items-baseline gap-3">{productOpen.number}<span className="text-sm text-neutral-400 font-normal">{productOpen.manufacturer} · {productOpen.condition}</span></h2>
                   <button
-                    onClick={() => setProductOpen(null)}
+                    onClick={closeProduct}
                     className="text-neutral-400 hover:text-neutral-200"
                   >
                     Закрити
