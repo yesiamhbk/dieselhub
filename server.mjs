@@ -18,6 +18,43 @@ const {
   NOVA_POSHTA_KEY,       // совместимость с предыдущим именем
 } = process.env;
 
+// === Anti-spam + Turnstile (minimal) ===
+const TURNSTILE_SITE_KEY = process.env.TURNSTILE_SITE_KEY || process.env.VITE_TURNSTILE_SITE_KEY || "1x00000000000000000000AA"; // test
+const TURNSTILE_SECRET_KEY = process.env.TURNSTILE_SECRET_KEY || "1x0000000000000000000000000000000AA"; // test
+const ORDER_RATE_LIMIT_COUNT = Number(process.env.ORDER_RATE_LIMIT_COUNT || 2);
+const ORDER_RATE_LIMIT_WINDOW_MS = Number(process.env.ORDER_RATE_LIMIT_WINDOW_MS || 5 * 60 * 1000);
+
+const orderRateStore = new Map();
+const rateKey = (ip, dev) => `${ip}|${dev || "no-device"}`;
+function shouldAskCaptcha(ip, dev) {
+  const now = Date.now();
+  const k = rateKey(ip, dev);
+  const list = (orderRateStore.get(k) || []).filter(t => now - t < ORDER_RATE_LIMIT_WINDOW_MS);
+  orderRateStore.set(k, list);
+  return list.length >= ORDER_RATE_LIMIT_COUNT;
+}
+function markAttempt(ip, dev) {
+  const k = rateKey(ip, dev);
+  const list = orderRateStore.get(k) || [];
+  list.push(Date.now());
+  orderRateStore.set(k, list);
+}
+async function verifyTurnstile(token, ip) {
+  if (!token) return false;
+  try {
+    const r = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ secret: TURNSTILE_SECRET_KEY, response: token, remoteip: ip }),
+    });
+    const j = await r.json();
+    return !!j.success;
+  } catch (e) {
+    console.error("[turnstile verify error]", e);
+    return false;
+  }
+}
+
 if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
   console.error("No SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY in env");
   process.exit(1);
@@ -217,9 +254,23 @@ app.delete("/api/admin/product/:id/image", requireAdmin, async (req, res) => {
 app.post("/api/order", async (req, res) => {
   try {
     const body = req.body || {};
+    // Honeypot
+    if (body.company && String(body.company).trim()) {
+      console.warn("[order honeypot] bot blocked");
+      return res.json({ ok: true });
+    }
     if (!Array.isArray(body.items) || body.items.length === 0) {
       return res.status(400).json({ error: "no items" });
     }
+
+    const ip = (req.headers["x-forwarded-for"] || req.socket.remoteAddress || "").toString().split(",")[0].trim();
+    const deviceId = req.header("x-device-id") || "";
+
+    if (shouldAskCaptcha(ip, deviceId)) {
+      const ok = await verifyTurnstile(body.captchaToken, ip);
+      if (!ok) return res.status(403).json({ needCaptcha: true, siteKey: TURNSTILE_SITE_KEY });
+    }
+    markAttempt(ip, deviceId);
 
     const name = String(body.name || "").trim();
     const phone = String(body.phone || "").trim();
@@ -234,7 +285,10 @@ app.post("/api/order", async (req, res) => {
       `🛒 *Нове замовлення*\n` +
       `👤 ${name}\n` +
       `📞 ${phone}\n` +
-      `🚚 ${delivery}\n\n` +
+      `🚚 ${delivery}\n` +
+      (body.utm ? `🔗 utm: ${JSON.stringify(body.utm)}\n` : "") +
+      `📱 device: ${deviceId || "—"}\n` +
+      `🌐 ip: ${ip || "—"}\n\n` +
       `${itemsText}\n\n` +
       `Σ Разом: *${total.toLocaleString("uk-UA")} ₴*`;
 
@@ -253,6 +307,7 @@ app.post("/api/order", async (req, res) => {
     res.status(500).json({ error: String(e.message || e) });
   }
 });
+
 
 /* =========================
    Nova Poshta proxy (server)
