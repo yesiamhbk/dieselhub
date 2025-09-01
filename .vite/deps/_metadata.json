@@ -7,13 +7,13 @@
     "react": {
       "src": "../../node_modules/react/index.js",
       "file": "react.js",
-      "fileHash": "dc3f010c",
+      "fileHash": "0793e345",
       "needsInterop": true
     },
     "react-dom/client": {
       "src": "../../node_modules/react-dom/client.js",
       "file": "react-dom_client.js",
-      "fileHash": "32591843",
+      "fileHash": "3a7c5052",
       "needsInterop": true
     }
   },
