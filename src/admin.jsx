@@ -38,7 +38,7 @@ function Textarea({ label, ...props }) {
 /* ===== константы ===== */
 const MANUFACTURERS = ["Bosch", "Denso", "Delphi", "Siemens VDO", "Continental"];
 const CONDITIONS = ["Нове", "Відновлене"];
-const TYPES = ["Форсунка", "ТНВД", "Клапан"];
+const TYPES = ["Форсунка", "ПНВТ", "Клапан"];
 const AVAILABILITIES = ["В наявності", "Під замовлення"];
 
 /* ===== страница ===== */
@@ -46,13 +46,51 @@ export default function AdminPanel() {
   /* --- токен --- */
   const [token, setToken] = useState(localStorage.getItem("dh_admin_token") || "");
   const [tokenInput, setTokenInput] = useState("");
-  const [err, setErr] = useState("");
+  
+
+  // --- статус API/токена ---
+  const [apiOk, setApiOk] = useState(null); // null=неизвестно, true=OK, false=нет доступа
+
+  // Унифицированный fetch для админ-эндпоинтов: подставляет токен и авто-логаут при 401
+  async function adminFetch(path, opts = {}) {
+    const headers = Object.assign({}, opts.headers || {}, token ? { "x-admin-token": token } : {});
+    const resp = await fetch(`${API}${path}`, { ...opts, headers });
+    if (resp.status === 401) {
+      localStorage.removeItem("dh_admin_token");
+      setToken("");
+      setApiOk(false);
+      alert("Невірний ADMIN_TOKEN. Увійдіть знову.");
+    }
+    return resp;
+  }
+
+  // Проверка токена при входе + периодический пинг
+  useEffect(() => {
+    let timer;
+    async function check() {
+      if (!token) {
+        setApiOk(false);
+        return;
+      }
+      try {
+        const r = await adminFetch(`/api/admin/export.json`, { method: "GET" });
+        if (r && r.ok) setApiOk(true); else if (r && r.status === 401) setApiOk(false); else setApiOk(false);
+      } catch {
+        setApiOk(false);
+      }
+    }
+    check();
+    // обновлять индикатор раз в 30 сек
+    timer = setInterval(check, 30000);
+    return () => clearInterval(timer);
+  }, [token]);
+const [err, setErr] = useState("");
 
   /* --- список товаров --- */
   async function patchProduct(id, patch) {
-    const r = await fetch(`${API}/api/admin/product/${id}`, {
+    const r = await adminFetch(`/api/admin/product/${id}`, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json", "x-admin-token": token },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(patch),
     });
     return r.ok;
@@ -138,7 +176,7 @@ export default function AdminPanel() {
       images: parseLines(f.images),
     };
 
-    const r = await fetch(`${API}/api/admin/product`, {
+    const r = await adminFetch(`/api/admin/product`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -173,7 +211,7 @@ export default function AdminPanel() {
 
   async function delProduct(id) {
     if (!confirm("Видалити товар?")) return;
-    const r = await fetch(`${API}/api/admin/product/${id}`, {
+    const r = await adminFetch(`/api/admin/product/${id}`, {
       method: "DELETE",
       headers: { "x-admin-token": token },
     });
@@ -193,7 +231,7 @@ export default function AdminPanel() {
       availability: p.availability,
     };
 
-    const r = await fetch(`${API}/api/admin/product/${p.id}`, {
+    const r = await adminFetch(`/api/admin/product/${p.id}`, {
       method: "PATCH",
       headers: {
         "Content-Type": "application/json",
@@ -216,7 +254,7 @@ export default function AdminPanel() {
     const fd = new FormData();
     for (const f of files) fd.append("files", f);
 
-    const r = await fetch(`${API}/api/admin/product/${productId}/upload`, {
+    const r = await adminFetch(`/api/admin/product/${productId}/upload`, {
       method: "POST",
       headers: { "x-admin-token": token }, // ВАЖНО: без Content-Type
       body: fd,
@@ -231,7 +269,7 @@ export default function AdminPanel() {
   }
 
   async function deleteOneImage(productId, url) {
-    const r = await fetch(`${API}/api/admin/product/${productId}/image`, {
+    const r = await adminFetch(`/api/admin/product/${productId}/image`, {
       method: "DELETE",
       headers: {
         "Content-Type": "application/json",
@@ -309,7 +347,7 @@ export default function AdminPanel() {
       const fd = new FormData();
       fd.append("file", file);
       // dry-run спочатку
-      let r = await fetch(`${API}/api/admin/import?dryRun=1&mode=upsert`, {
+      let r = await adminFetch(`/api/admin/import?dryRun=1&mode=upsert`, {
         method: "POST",
         headers: { "x-admin-token": token },
         body: fd,
@@ -327,7 +365,7 @@ export default function AdminPanel() {
       const ok = confirm(`Імпортувати?\nУсього: ${preview.total}\nОновиться: ~${preview.updated}\nДодасться: ~${preview.created}`);
       if (!ok) return;
       // реальний імпорт
-      r = await fetch(`${API}/api/admin/import?dryRun=0&mode=upsert`, {
+      r = await adminFetch(`/api/admin/import?dryRun=0&mode=upsert`, {
         method: "POST",
         headers: { "x-admin-token": token },
         body: fd,
@@ -447,9 +485,9 @@ export default function AdminPanel() {
             const ok = await patchProduct(targetId, payload);
             if (ok) updated++; else failed++;
           } else {
-            const resp = await fetch(`${API}/api/admin/product`, {
+            const resp = await adminFetch(`/api/admin/product`, {
               method: "POST",
-              headers: { "Content-Type": "application/json", "x-admin-token": token },
+              headers: { "Content-Type": "application/json" },
               body: JSON.stringify(payload),
             });
             if (resp.ok) created++; else failed++;
@@ -469,6 +507,10 @@ export default function AdminPanel() {
       <header className="sticky top-0 z-10 bg-neutral-950/60 backdrop-blur-md border-b border-neutral-800">
         <div className="mx-auto max-w-7xl px-4 py-3 flex items-center justify-between">
           <div className="font-bold">Адмін-панель · Diesel Hub</div>
+          <div className="ml-3 text-xs px-2 py-1 rounded-md border"
+               style={{borderColor: apiOk===true? "#14532d": apiOk===false? "#7f1d1d":"#525252", background: apiOk===true? "rgba(34,197,94,0.1)": apiOk===false? "rgba(239,68,68,0.08)":"rgba(64,64,64,0.3)", color: apiOk===true? "#22c55e": apiOk===false? "#ef4444":"#d4d4d4"}}>
+            {apiOk===true? "Статус API: ОК": apiOk===false? "Немає доступу": "Перевірка…"}
+          </div>
           <div className="flex items-center gap-2">
             <button onClick={exportCSV} className="rounded-lg border border-neutral-700 px-3 py-1.5 text-sm hover:border-yellow-400">Експорт CSV</button>
             <button onClick={exportJSON} className="rounded-lg border border-neutral-700 px-3 py-1.5 text-sm hover:border-yellow-400">Експорт JSON</button>

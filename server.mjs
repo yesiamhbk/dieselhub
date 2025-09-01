@@ -62,7 +62,7 @@ app.get("/api/products", async (_req, res) => {
   try {
     const { data, error } = await supaAdmin
       .from("products")
-      .select("*")
+      .select("id,number,oem,cross,manufacturer,condition,type,availability,qty,price,engine,images")
       .order("id", { ascending: true });
     if (error) throw error;
     res.json(data || []);
@@ -75,7 +75,9 @@ app.get("/api/products", async (_req, res) => {
 // Создание/апсерта товара
 app.post("/api/admin/product", requireAdmin, async (req, res) => {
   try {
-    const payload = req.body;
+    const src = req.body || {};
+    const allowed = ["price","qty","availability","number","oem","cross","manufacturer","condition","type","engine","images"];
+    const payload = Object.fromEntries(Object.entries(src).filter(([k]) => allowed.includes(k)));
     const { data, error } = await supaAdmin
       .from("products")
       .upsert(payload)
@@ -94,13 +96,24 @@ app.patch("/api/admin/product/:id", requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const src = req.body || {};
-    const allowed = [
-      "price", "qty", "availability", "number", "oem",
-      "cross", "manufacturer", "condition", "type", "engine", "models", "images",
-    ];
+    const allowed = ["price","qty","availability","number","oem","cross","manufacturer","condition","type","engine","images"];
     const patch = {};
     for (const k of allowed) if (k in src && src[k] !== undefined) patch[k] = src[k];
     if (Object.keys(patch).length === 0) return res.json({ ok: true });
+// (One-off) Очистка поля models (переводим в NULL для всего каталога)
+app.post("/api/admin/migrate/clear-models", requireAdmin, async (_req, res) => {
+  try {
+    const { error } = await supaAdmin
+      .from("products")
+      .update({ models: null });
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("[POST /api/admin/migrate/clear-models] error:", e);
+    res.status(500).json({ error: String(e.message || e) });
+  }
+});
+
 
     const { data, error } = await supaAdmin
       .from("products")
@@ -382,7 +395,7 @@ function csvStringify(rows){
   const header=Object.keys(rows[0]); const esc=v=>{const s=(v==null?"":String(v)); return (s.includes(",")||s.includes(";")||s.includes("\n")||s.includes('"'))?'"'+s.replace(/"/g,'""')+'"':s;};
   const out=[header.join(",")]; for(const r of rows) out.push(header.map(k=>esc(r[k])).join(",")); return out.join("\n");
 }
-async function fetchAllProducts(){ const {data,error}=await supaAdmin.from("products").select("*").order("id",{ascending:true}); if(error) throw error; return data||[]; }
+async function fetchAllProducts(){ const {data,error}=await supaAdmin.from("products").select("id,number,oem,cross,manufacturer,condition,type,availability,qty,price,engine,images").order("id",{ascending:true}); if(error) throw error; return data||[]; }
 function shapeForExport(p){ return { id:p.id??"", number:p.number??"", oem:p.oem??"", cross:Array.isArray(p.cross)?p.cross.join("|"):"", manufacturer:p.manufacturer??"", condition:p.condition??"", type:p.type??"", engine:p.engine??"", availability:p.availability??"", qty:p.qty??0, price:p.price??0, images:Array.isArray(p.images)?p.images.join("|"):"" }; }
 const ALLOWED_CONDITIONS=new Set(["Нове","Відновлене"]); const ALLOWED_TYPES=new Set(["Форсунка","ТНВД","Клапан"]); const ALLOWED_AVAIL=new Set(["В наявності","Під замовлення"]);
 function shapeIncoming(o){ const out={ id:o.id??null, number:(o.number??"").trim(), oem:(o.oem??"").trim(), cross:Array.isArray(o.cross)?o.cross:String(o.cross||"").split("|").map(s=>s.trim()).filter(Boolean), manufacturer:(o.manufacturer??"").trim(), condition:(o.condition??"").trim(), type:(o.type??"").trim(), engine:(o.engine===""||o.engine==null)?null:Number(o.engine), availability:(o.availability??"").trim(), qty:(o.qty===""||o.qty==null)?0:parseInt(o.qty,10), price:(o.price===""||o.price==null)?0:Number(o.price), images:Array.isArray(o.images)?o.images:String(o.images||"").split("|").map(s=>s.trim()).filter(Boolean)}; if(!Number.isFinite(out.engine)) out.engine=null; if(!Number.isFinite(out.price)) out.price=0; if(!Number.isInteger(out.qty)||out.qty<0) out.qty=0; return out; }

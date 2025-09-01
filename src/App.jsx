@@ -19,7 +19,7 @@ function getProductStockById(products, id) {
 }
 
 // Список типів — обовʼязково є "Клапан"
-const TYPES = ["Форсунка", "ТНВД", "Клапан"];
+const TYPES = ["Форсунка", "ПНВТ", "Клапан"];
 const CONDITIONS = ["Нове", "Відновлене"];
 const AVAILABILITIES = ["В наявності", "Під замовлення"];
 
@@ -89,6 +89,31 @@ function formatUAPhone(d) {
 /* ===================== Додаток ===================== */
 
 export default function App() {
+
+// Header height compensation (black band under fixed header)
+const headerRef = useRef(null);
+const [headerHeight, setHeaderHeight] = useState(0);
+useEffect(() => {
+  const update = () => setHeaderHeight(headerRef.current ? headerRef.current.offsetHeight : 0);
+  update();
+  window.addEventListener('resize', update);
+  return () => window.removeEventListener('resize', update);
+}, []);
+
+
+// Cleanup accidental stray text nodes like ")}" that could appear at the very bottom
+useEffect(() => {
+  try {
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    const toFix = [];
+    let node;
+    while ((node = walker.nextNode())) {
+      if (node.nodeValue && node.nodeValue.trim() === ") }".replace(" ", "")) toFix.push(node);
+    }
+    toFix.forEach(n => (n.nodeValue = ""));
+  } catch {}
+}, []);
+
   /* ----------- Пошук/фільтри ----------- */
   const [query, setQuery] = useState("");
   const [filters, setFilters] = useState({
@@ -286,7 +311,37 @@ export default function App() {
   const startedWithParamRef = useRef(false);
   const [modalQtyStr, setModalQtyStr] = useState("1");
   const [activeImg, setActiveImg] = useState(0);
+  /* ----------- Нещодавно переглянуті ----------- */
+  const [recent, setRecent] = useState([]); // array of product ids (most recent first)
+  // Init from localStorage
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("recentlyViewed");
+      if (raw) {
+        const arr = JSON.parse(raw);
+        if (Array.isArray(arr)) setRecent(arr.filter((x) => x != null));
+      }
+    } catch {}
+  }, []);
+  function pushRecent(id) {
+    setRecent((prev) => {
+      const arr = [id, ...prev.filter((x) => x !== id)];
+      const limited = arr.slice(0, 8);
+      try { localStorage.setItem("recentlyViewed", JSON.stringify(limited)); } catch {}
+      return limited;
+    });
+  }
+  function clearRecents() {
+    setRecent([]);
+    try { localStorage.removeItem("recentlyViewed"); } catch {}
+  }
+  const recentProducts = useMemo(
+    () => recent.map((id) => products.find((pp) => pp.id === id)).filter(Boolean),
+    [recent, products]
+  );
+
   function openProduct(p) {
+    pushRecent(p.id);
     setProductOpen(p);
     setActiveImg(0);
     setModalQtyStr("1");
@@ -348,6 +403,7 @@ export default function App() {
           const found = products.find((pp) => String(pp.id) === String(pid));
           if (found) {
             setProductOpen(found);
+            pushRecent(found.id);
             setActiveImg(0);
             setModalQtyStr("1");
             return;
@@ -540,9 +596,9 @@ export default function App() {
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100">
       {/* Header */}
-      <header className="fixed top-0 inset-x-0 z-50 bg-neutral-950/60 backdrop-blur-md border-b border-neutral-800">
+      <header ref={headerRef} className="fixed top-0 inset-x-0 z-50 bg-neutral-950/60 backdrop-blur-md border-b border-neutral-800">
         <div className="mx-auto max-w-7xl px-4 py-3 flex items-center gap-4">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <img src="/dh-logo.png" alt="Diesel Hub" className="h-8 w-8 object-contain" />
             <div className="font-bold tracking-tight">Diesel Hub</div>
           </div>
@@ -573,11 +629,15 @@ export default function App() {
 
         <div className="border-t border-neutral-800 bg-neutral-900 text-neutral-200">
           <div className="mx-auto max-w-7xl px-4 py-2 text-center text-sm">
-            Усі форсунки й ТНВД —{" "}
+            Усі форсунки й ПНВТ —{" "}
             <span className="text-yellow-400 font-semibold">гарантія 6 місяців</span> · перевірені
           </div>
         </div>
-      </header>
+      
+</header>
+      {/* Spacer under header so it doesn't overlap content */}
+      <div aria-hidden className="bg-neutral-950" style={{height: headerHeight}} />
+
 
       
         <div className="h-16 sm:h-20"></div>
@@ -585,16 +645,24 @@ export default function App() {
       <section className="border-b border-neutral-800">
         <div className="mx-auto max-w-7xl px-4 py-8 md:py-10 grid md:grid-cols-2 gap-6 items-center relative">
           <div>
-            <a
-              href="https://kropdieselhub.com"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="absolute right-4 top-2 md:top-4 rounded-xl border border-yellow-500/60 bg-yellow-400 text-neutral-950 px-3 py-2 text-sm font-semibold hover:brightness-95 whitespace-nowrap"
-            >
-              Наше СТО
-            </a>
+            <div className="absolute right-4 -top-8 md:-top-12 flex flex-col items-end gap-2">
+  <a
+    href="#/trade-in"
+    className="rounded-2xl border border-yellow-500/60 bg-yellow-400 text-neutral-900 px-4 py-2 text-base font-semibold hover:brightness-95 whitespace-nowrap"
+  >
+    Обмін
+  </a>
+  <a
+    href="https://kropdieselhub.com"
+    target="_blank"
+    rel="noopener noreferrer"
+    className="rounded-2xl border border-neutral-700 px-4 py-2.5 text-base font-semibold hover:brightness-95 whitespace-nowrap"
+  >
+    Наше СТО
+  </a>
+</div>
             <h1 className="text-3xl md:text-4xl font-extrabold leading-tight">
-              Форсунки та ТНВД Common Rail
+              Форсунки та ПНВТ Common Rail
               <span className="block text-yellow-400">в наявності та з гарантією</span>
             </h1>
             <p className="mt-3 text-neutral-300">
@@ -623,7 +691,7 @@ export default function App() {
       {/* Main */}
       <main className="mx-auto max-w-7xl px-4 py-8 grid grid-cols-1 md:grid-cols-12 gap-8">
         {/* Sidebar Filters */}
-        <aside className="md:col-span-3 space-y-6">
+        <aside className="md:col-span-3"><div className="space-y-6 md:sticky md:top-0 md:min-h-screen md:flex md:flex-col md:justify-end">
           <div className="text-xs uppercase tracking-wide text-neutral-400">Фільтр</div>
 
           {/* Поля пошуку */}
@@ -773,7 +841,7 @@ export default function App() {
               ))}
             </div>
           </div>
-        </aside>
+        </div></aside>
 
         {/* Products */}
         <section className="md:col-span-9">
@@ -845,7 +913,7 @@ export default function App() {
           </div>
 
           {/* Пагінація + Показати ще */}
-          <div className="mt-6 flex items-center justify-between">
+          <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             {/* Пагінація */}
             <div className="flex items-center gap-2">
               <button
@@ -906,7 +974,7 @@ export default function App() {
             </div>
 
             {/* Показати ще */}
-            <div className="overflow-hidden">
+            <div>
               <button
                 onClick={() => {
                   setMode("more");
@@ -1354,11 +1422,75 @@ export default function App() {
         </div>
       )}
 
+      
+      
+      {/* Нещодавно переглянуті */}
+      {recentProducts.length > 0 && (
+        <section className="mt-10 mb-6">
+          <div className="mx-auto max-w-7xl px-4">
+            <div className="grid grid-cols-1 md:grid-cols-12">
+              <div className="hidden md:block md:col-span-3"></div>
+              <div className="md:col-span-9">
+                <div className="flex items-center justify-between mb-2 px-1">
+                  <h2 className="text-[13px] uppercase tracking-wider text-neutral-400">Нещодавно переглянуті</h2>
+                  <button
+                    onClick={clearRecents}
+                    className="text-[12px] text-neutral-500 hover:text-neutral-300 transition-colors"
+                  >
+                    Очистити
+                  </button>
+                </div>
+                <div className="rv-strip flex gap-3 overflow-x-auto pb-2 -mx-1 px-1">
+                  {recentProducts.map((p) => (
+                    <button
+                      key={p.id}
+                      onClick={() => openProduct(p)}
+                      className="rv-card shrink-0 w-[160px] md:w-[180px] bg-neutral-950/60 border border-neutral-800 rounded-2xl hover:border-yellow-500/60 transition-colors transform hover:-translate-y-0.5 active:translate-y-0 text-left"
+                    >
+                      <div className="rv-thumb w-full aspect-[4/3] overflow-hidden rounded-t-2xl bg-neutral-900">
+                        {Array.isArray(p.images) && p.images.length > 0 ? (
+                          <img src={p.images[0]} alt={p.number ? `${p.number} — ${p.manufacturer || ''}` : ''} className="w-full h-full object-cover" loading="lazy" />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center text-sm text-neutral-500">Фото</div>
+                        )}
+                      </div>
+                      <div className="rv-meta p-3 space-y-1">
+                        <div className="rv-name text-sm font-medium leading-tight truncate" title={p.number}>{p.number}</div>
+                        <div className="rv-oem text-[12px] text-neutral-400 truncate" title={p.oem ? `OEM: ${p.oem}` : ''}>
+                          OEM: <span className="text-neutral-300">{p.oem || "—"}</span>
+                        </div>
+                        <div className="rv-row flex items-center justify-between pt-1">
+                          <span className="rv-cond text-[11px] px-2 py-0.5 rounded-full border border-neutral-700 text-neutral-300">
+                            {p.condition || "—"}
+                          </span>
+                          <span className="rv-price text-[13px] font-semibold text-yellow-400">
+                            {(p.price || 0).toLocaleString("uk-UA")} ₴
+                          </span>
+                        </div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+                {/* Скрыть полосы прокрутки у блока "Нещодавно переглянуті" */}
+                <style>
+                  {`
+                    .rv-strip::-webkit-scrollbar { display: none; }
+                    .rv-strip { scrollbar-width: none; -ms-overflow-style: none; }
+                  `}
+                </style>
+              </div>
+            </div>
+          </div>
+        </section>
+      )}
+
+      )}
+
       {/* Footer */}
       <footer className="mt-16 border-t border-neutral-800">
         <div className="mx-auto max-w-7xl px-4 py-8 text-sm text-neutral-400 flex items-center justify-between">
           <div>© {new Date().getFullYear()} Diesel Hub</div>
-          <div>Ремонт і продаж дизельних форсунок і ТНВД</div>
+          <div>Ремонт і продаж дизельних форсунок і ПНВТ</div>
         </div>
       </footer>
     </div>
