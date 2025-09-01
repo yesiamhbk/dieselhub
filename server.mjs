@@ -278,7 +278,7 @@ app.post("/api/order", async (req, res) => {
     const total = Number(body.total || 0);
 
     const itemsText = body.items
-      .map(i => `• ${i.number || i.id} | OEM: ${i.oem || "—"} | ${i.qty} шт × ${i.price} ₴`)
+      .map(i => `• ${i.number || i.id} | ${i.availability || "—"} | ${i.condition || "—"} | ${i.type || "—"} | ${i.qty} шт × ${i.price} ₴`)
       .join("\n");
 
     const text =

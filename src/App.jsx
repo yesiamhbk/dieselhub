@@ -277,8 +277,9 @@ useEffect(() => {
       const ex = prev.find((i) => i.id === p.id);
       const stock = Math.max(0, Number(p.qty) || 0);
       const already = ex ? Math.max(0, Number(ex.qty) || 0) : 0;
-      const maxAdd = Math.max(0, stock - already);
-      const add = Math.min(Math.max(1, Number(n) || 0), maxAdd || 0);
+      const isPreorder = stock === 0;
+      const maxAdd = isPreorder ? 99 : Math.max(0, stock - already);
+      const add = Math.min(Math.max(1, Number(n) || 0), maxAdd);
       if (!add) return prev;
       if (ex) return prev.map((i) => (i.id === p.id ? { ...i, qty: (i.qty || 0) + add } : i));
       return [...prev, { id: p.id, qty: add }];
@@ -559,6 +560,9 @@ useEffect(() => {
         .map((i) => ({
           id: i.id,
           number: i.number,
+          availability: i.availability,
+          condition: i.condition,
+          type: i.type,
           oem: i.oem,
           qty: i.qty,
           price: i.price,
@@ -1110,12 +1114,13 @@ useEffect(() => {
       const parsed = parseInt(modalQtyStr || "0", 10) || 0;
       const inCart = (cart.find(c=>c.id===productOpen?.id)?.qty || 0);
       const stock = Math.max(0, Number(productOpen?.qty)||0);
-      const maxAdd = Math.max(0, stock - inCart);
-      const addN = Math.min(Math.max(1, parsed), maxAdd || 0);
+      const isPreorder = stock === 0;
+      const maxAdd = isPreorder ? 99 : Math.max(0, stock - inCart);
+      const addN = Math.min(Math.max(1, parsed), maxAdd);
       if (!addN) return;
       addToCartN(productOpen, addN);
     }}
-    disabled={(parseInt(modalQtyStr || "0", 10) || 0) < 1 || Math.max(0, (Number(productOpen?.qty)||0) - (cart.find(c=>c.id===productOpen?.id)?.qty || 0)) === 0}
+    disabled={(parseInt(modalQtyStr || "0", 10) || 0) < 1 || ((Math.max(0, Number(productOpen?.qty)||0) > 0) && ((Math.max(0, Number(productOpen?.qty)||0) - (cart.find(c=>c.id===productOpen?.id)?.qty || 0)) <= 0))}
     className="rounded-xl border border-yellow-500/60 bg-yellow-400 text-neutral-950 hover:bg-yellow-300 hover:text-neutral-900 px-4 py-2 disabled:opacity-50 disabled:cursor-not-allowed"
   >
     Додати до кошика
@@ -1147,13 +1152,14 @@ useEffect(() => {
                 {cartItems.map((item) => (
                   <div key={item.id} className="rounded-xl border border-neutral-800 p-3">
                     <div className="flex items-start gap-3">
-                      <div className="h-16 w-24 rounded-lg bg-neutral-800 grid place-items-center text-neutral-400 text-xs overflow-hidden">
+                      <div className="w-24"><div className="h-16 w-24 rounded-lg bg-neutral-800 grid place-items-center text-neutral-400 text-xs overflow-hidden">
                         {hasImages(item.images) ? (
                           <img src={item.images[0]} alt="" className="w-full h-full object-cover" />
                         ) : (
                           "Фото"
                         )}
                       </div>
+  <div className="mt-1 w-24">{((getProductStockById(products, item.id) || 0) > 0) ? (<span className="block w-full text-center text-[11px] py-[3px] rounded-full border border-green-400 text-green-400">В наявності</span>) : (<span className="block w-full text-center text-[11px] py-[3px] rounded-full border border-yellow-400 text-yellow-400">1–3 дні</span>)}</div></div>
                       <div className="flex-1">
                         <div className="font-semibold">{item.number}</div>
                         <div className="text-sm text-neutral-400">OEM: {item.oem || "—"}</div>
@@ -1484,7 +1490,7 @@ useEffect(() => {
         </section>
       )}
 
-      )}
+      
 
       {/* Footer */}
       <footer className="mt-16 border-t border-neutral-800">
