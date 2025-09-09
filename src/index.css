@@ -22,3 +22,11 @@ html, body {
 html, body {
   overflow-x: hidden;   /* на всякий случай скрываем горизонтальный скролл */
 }
+
+
+/* iOS safe-area padding for bottom sticky bars */
+.pb-safe { padding-bottom: env(safe-area-inset-bottom); }
+
+/* Hide scrollbars in overflow containers (mobile aesthetics) */
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }

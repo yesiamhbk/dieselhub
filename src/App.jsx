@@ -131,7 +131,10 @@ export default function App() {
     carModel: "",
   });
 
-  /* ----------- Дані товарів ----------- */
+  
+  // Мобільний тумблер для додаткових фільтрів
+  const [moreFiltersOpen, setMoreFiltersOpen] = useState(false);
+/* ----------- Дані товарів ----------- */
   const [products, setProducts] = useState([]);
   useEffect(() => {
     let cancelled = false;
@@ -626,7 +629,7 @@ export default function App() {
         <div className="mx-auto max-w-7xl px-4 py-8 md:py-10 grid md:grid-cols-2 gap-6 items-center relative">
           <div>
             {/* Мобильные CTA — обе жёлтые */}
-            <div className="absolute right-4 -top-8 md:-top-12 flex flex-col items-end gap-2 md:hidden">
+            <div className="hidden md:hidden">
               <a
                 href="#/trade-in"
                 className="rounded-2xl border border-yellow-500/60 bg-yellow-400 text-neutral-900 px-4 py-2 text-base font-semibold hover:brightness-95 whitespace-nowrap"
@@ -706,8 +709,20 @@ export default function App() {
               />
             </label>
           </div>
+          {/* Більше/Менше фільтрів — тільки мобільна версія */}
+          <button
+            type="button"
+            className="md:hidden w-full rounded-xl border border-neutral-800 bg-neutral-900/60 px-4 py-2 text-sm text-neutral-200 hover:border-neutral-700 mb-3"
+            onClick={() => setMoreFiltersOpen(v => !v)}
+          >
+            {moreFiltersOpen ? "Менше фільтрів" : "Більше фільтрів"}
+          </button>
 
-          {/* Тип */}
+
+          
+          {/* Додаткові фільтри (сховані на моб.) */}
+          <div className={classNames("md:block", moreFiltersOpen ? "block" : "hidden")}>
+{/* Тип */}
           <div className="rounded-2xl border border-neutral-800 p-4">
             <div className="font-semibold mb-2">Тип</div>
             <div className="flex flex-wrap gap-2">
@@ -826,7 +841,9 @@ export default function App() {
               ))}
             </div>
           </div>
-        </div></aside>
+        
+          </div>
+</div></aside>
 
         {/* Products */}
         <section className="md:col-span-9">
@@ -959,7 +976,7 @@ export default function App() {
             </div>
 
             {/* Показати ще */}
-            <div>
+            <div className="w-full">
               <button
                 onClick={() => {
                   setMode("more");
@@ -967,7 +984,7 @@ export default function App() {
                 }}
                 disabled={visibleCount >= filtered.length}
                 className={classNames(
-                  "rounded-xl border px-4 py-2 text-sm font-semibold",
+                  "w-full sm:w-auto max-w-full text-center rounded-xl border px-4 py-2 text-sm font-semibold",
                   visibleCount >= filtered.length
                     ? "border-neutral-800 text-neutral-600 cursor-not-allowed"
                     : "border-yellow-500/60 bg-yellow-400 text-neutral-950 hover:brightness-95"

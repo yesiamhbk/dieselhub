@@ -23,8 +23,8 @@ echo; echo "=> 2) .env в .gitignore?"
 
 echo; echo "=> 3) Скан dist/ (после сборки не должно быть совпадений)"
 if [ -d dist ]; then
-  PATTERN_DIST='ADMIN_TOKEN|SERVICE_ROLE|BOT|TELEGRAM|NOVA|NP_API|SECRET|SUPABASE_KEY'
-  bash -c "$SEARCH \"$PATTERN_DIST\" dist/ || true"
+  PATTERN_DIST='ADMIN_TOKEN|SUPABASE_SERVICE_ROLE(_KEY)?|TELEGRAM_BOT_TOKEN|NP_API_KEY|NOVA_POSHTA_KEY|SESSION_SECRET|TURNSTILE_SECRET_KEY'
+  bash -c "$SEARCH \"$PATTERN_DIST\" dist/ || true" | grep -v 'SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED' || true
 else
   yellow "dist/ нет — сначала: npm run build"
 fi
