@@ -5,7 +5,14 @@ import multer from "multer";
 import { createClient } from "@supabase/supabase-js";
 
 const app = express();
-app.use(cors());
+app.disable('x-powered-by');
+
+// CORS whitelist (prod-safe). Override via CORS_ORIGINS env, comma-separated.
+const DEFAULT_ORIGINS = ['http://localhost:5173','http://127.0.0.1:5173','https://dieselhub.com.ua','https://kropdieselhub.com'];
+const ORIGINS = (process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(',') : DEFAULT_ORIGINS).map(s=>s.trim());
+app.use(cors({
+  origin(origin, cb){ if(!origin) return cb(null,true); cb(null, ORIGINS.includes(origin)); },
+}));
 app.use(express.json({ limit: "5mb" }));
 
 const {
@@ -73,7 +80,7 @@ function requireAdmin(req, res, next) {
 app.get("/api/health", (_req, res) => res.json({ ok: true }));
 
 // ===== Диагностика подключения (что видит сервер) =====
-app.get("/api/debug/db", async (_req, res) => {
+app.get("/api/debug/db", requireAdmin, async (_req, res) => {
   try {
     const { count, error } = await supaAdmin
       .from("products")
@@ -275,17 +282,44 @@ app.post("/api/order", async (req, res) => {
     const name = String(body.name || "").trim();
     const phone = String(body.phone || "").trim();
     const delivery = String(body.delivery || "Нова пошта");
+    const payment = typeof body.payment === 'string' ? String(body.payment) : null;
     const total = Number(body.total || 0);
 
     const itemsText = body.items
       .map(i => `• ${i.number || i.id} | ${i.availability || "—"} | ${i.condition || "—"} | ${i.type || "—"} | ${i.qty} шт × ${i.price} ₴`)
       .join("\n");
 
-    const text =
+    
+    // Save order to Supabase (fail-soft)
+    let savedOrderId = null;
+    try {
+      const { data: ins, error: insErr } = await supaAdmin
+        .from("orders")
+        .insert({
+          name,
+          phone,
+          delivery,
+          payment,
+          total,
+          items: body.items,
+          utm: body.utm || null,
+          device_id: deviceId || null,
+          ip,
+          status: "Новий"
+        })
+        .select("id")
+        .single();
+      if (insErr) throw insErr;
+      savedOrderId = ins?.id || null;
+    } catch (e) {
+      console.warn("[orders insert] skip:", e.message || e);
+    }
+const text =
       `🛒 *Нове замовлення*\n` +
       `👤 ${name}\n` +
       `📞 ${phone}\n` +
       `🚚 ${delivery}\n` +
+      `💳 ${payment || "—"}\n` +
       (body.utm ? `🔗 utm: ${JSON.stringify(body.utm)}\n` : "") +
       `📱 device: ${deviceId || "—"}\n` +
       `🌐 ip: ${ip || "—"}\n\n` +
@@ -308,6 +342,67 @@ app.post("/api/order", async (req, res) => {
   }
 });
 
+
+
+// ===== Orders list for admin =====
+app.get("/api/admin/orders", requireAdmin, async (_req, res) => {
+  try {
+    const { data, error } = await supaAdmin
+      .from("orders")
+      .select("id,created_at,name,phone,delivery,payment,total,items,status,device_id,ip,utm,admin_comment")
+      .order("created_at", { ascending: false })
+      .limit(200);
+    if (error) {
+      console.warn("[GET /api/admin/orders] supabase error:", error.message || error);
+      return res.json([]); // fail-soft: пустой список, чтобы админка не падала
+    }
+    res.json(data || []);
+  } catch (e) {
+    console.error("[GET /api/admin/orders] error:", e);
+    res.json([]); // fail-soft
+  }
+});
+
+// Get one order (admin)
+app.get("/api/admin/orders/:id", requireAdmin, async (req, res) => {
+  try {
+    const { data, error } = await supaAdmin
+      .from("orders")
+      .select("id,created_at,name,phone,delivery,payment,total,items,status,device_id,ip,utm,admin_comment")
+      .eq("id", req.params.id)
+      .single();
+    if (error) return res.status(404).json({ error: "not_found" });
+    res.json(data);
+  } catch (e) {
+    console.error("[GET /api/admin/orders/:id] error:", e);
+    res.status(500).json({ error: String(e.message || e) });
+  }
+});
+
+// Update order status (admin)
+app.patch("/api/admin/orders/:id", requireAdmin, async (req, res) => {
+  try {
+    const s = typeof req.body?.status === 'string' ? req.body.status : '';
+    const comment = typeof req.body?.admin_comment === 'string' ? String(req.body.admin_comment).slice(0, 1000) : undefined;
+    const upd = {};
+    if (s) upd.status = s;
+    if (comment !== undefined) upd.admin_comment = comment;
+    const payment = typeof req.body?.payment === 'string' ? req.body.payment : undefined;
+    if (payment !== undefined) upd.payment = payment;
+    if (!Object.keys(upd).length) return res.status(400).json({ error: 'no_fields' });
+    const { data, error } = await supaAdmin
+      .from('orders')
+      .update(upd)
+      .eq('id', req.params.id)
+      .select()
+      .single();
+    if (error) return res.status(500).json({ error: 'failed' });
+    res.json(data);
+  } catch (e) {
+    console.error('[PATCH /api/admin/orders/:id] error:', e);
+    res.status(500).json({ error: String(e.message || e) });
+  }
+});
 
 /* =========================
    Nova Poshta proxy (server)
@@ -426,7 +521,7 @@ app.get("/api/np/warehouses", async (req, res) => {
   }
 });
 
-// ===== Совместимость со старыми путями (/api/nova/...) =====
+// ===== Совместимость со старыми путями (/api/nova/...) [DEPRECATED: use /api/np/*] =====
 app.get("/api/nova/cies", (req, res) => res.redirect(307, `/api/np/settlements?${new URLSearchParams(req.query).toString()}`)); // опечатки на всякий
 app.get("/api/nova/cities", (req, res) => res.redirect(307, `/api/np/settlements?${new URLSearchParams(req.query).toString()}`));
 app.get("/api/nova/warehouses", (req, res) => res.redirect(307, `/api/np/warehouses?${new URLSearchParams(req.query).toString()}`));

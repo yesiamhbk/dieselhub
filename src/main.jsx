@@ -5,6 +5,7 @@ import App from "./App.jsx";
 import Warranty from "./Warranty.jsx";
 import AdminPanel from "./admin.jsx"; // адмінка
 import TradeIn from "./TradeIn.jsx";
+import PartnersSTO from "./PartnersSTO.jsx";
 import "./index.css";
 
 const root = createRoot(document.getElementById("root"));
@@ -14,6 +15,7 @@ function normalizeHash(h) {
   if (h === "#admin") return "#/admin";
   if (h === "#warranty") return "#/warranty";
   if (h === "#trade-in") return "#/trade-in";
+  if (h === "#partners-sto" || h === "#partners" || h === "#sto") return "#/partners-sto";
   return h.startsWith("#/") ? h : "#/";
 }
 
@@ -28,6 +30,9 @@ function renderByHash() {
       break;
     case "#/trade-in":
       root.render(<TradeIn />);
+      break;
+    case "#/partners-sto":
+      root.render(<PartnersSTO />);
       break;
     case "#/":
     default:
