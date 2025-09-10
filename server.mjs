@@ -610,5 +610,69 @@ app.post("/api/admin/import", requireAdmin, uploadOne.single("file"), async (req
   }catch(e){ console.error("[POST /api/admin/import] error:", e); res.status(500).json({error:String(e.message||e)}); }
 });
 
+
+// === Inventory sync from Google Sheets (Автоекспорт) ===
+app.post("/api/inventory/sync", async (req, res) => {
+  try {
+    const syncKey = req.get("x-sync-key");
+    if (!syncKey || syncKey !== process.env.SYNC_KEY) {
+      return res.status(401).json({ ok: false, error: "unauthorized" });
+    }
+    const items = Array.isArray(req.body.items) ? req.body.items : [];
+    let updated = 0, notFound = [];
+
+    for (const it of items) {
+      const sku = String(it.sku || "").trim();
+      const qty = Number(it.qty);
+      if (!sku || Number.isNaN(qty)) continue;
+
+      // find product by sku (preferred)
+      let prod = null;
+      let { data, error } = await supaAdmin
+        .from("products")
+        .select("id, qty, sku, number")
+        .eq("sku", sku)
+        .single();
+
+      if (!data || error) {
+        // fallback: some projects still use "number" as external code
+        const r2 = await supaAdmin
+          .from("products")
+          .select("id, qty, sku, number")
+          .eq("number", sku)
+          .single();
+        data = r2.data; error = r2.error;
+      }
+
+      if (!data || error) { notFound.push(sku); continue; }
+
+      // update qty
+      const before = Number(data.qty || 0);
+      const after = qty;
+      const up = await supaAdmin.from("products").update({ qty: after }).eq("id", data.id);
+      if (up.error) continue;
+
+      // log movement if table exists
+      try {
+        await supaAdmin.from("inventory_movements").insert({
+          product_id: data.id,
+          qty_before: before,
+          qty_after: after,
+          delta: after - before,
+          reason: "sync",
+          ref: "sheets",
+          operator: "auto"
+        });
+      } catch (_e) {}
+
+      updated++;
+    }
+
+    res.json({ ok: true, updated, notFound });
+  } catch (e) {
+    console.error("[POST /api/inventory/sync] error:", e);
+    res.status(500).json({ ok: false, error: String(e.message || e) });
+  }
+});
 /* === ВАЖНО ДЛЯ RENDER === */
 app.listen(process.env.PORT || 10000, "0.0.0.0", () => { console.log("API server listening on port", process.env.PORT || 10000); });
