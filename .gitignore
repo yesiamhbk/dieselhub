@@ -13,3 +13,6 @@ dist/
 .DS_Store
 .env
 .env
+
+# Vite cache
+.vite/

@@ -22,6 +22,16 @@ const TYPES = ["Форсунка", "ПНВТ", "Клапан"];
 const CONDITIONS = ["Нове", "Відновлене"];
 const AVAILABILITIES = ["В наявності", "Під замовлення"];
 
+// Ефективна наявність з урахуванням кількості
+function effectiveAvailability(p) {
+  const raw = (p && typeof p.availability === "string") ? p.availability : "";
+  const qty = Number(p && p.qty) || 0;
+  // Якщо заявлено "В наявності" і є штучний залишок >0 — показуємо "В наявності"
+  // В усіх інших випадках — "Під замовлення"
+  return (raw === "В наявності" && qty > 0) ? "В наявності" : "Під замовлення";
+}
+
+
 function ExpandableList({ items = [], max = 3 }) {
   const [open, setOpen] = useState(false);
   if (!items || items.length === 0) return <span className="text-neutral-400 text-left">—</span>;
@@ -175,7 +185,7 @@ export default function App() {
       if (filters.brand.size && !filters.brand.has(p.manufacturer)) return false;
       if (filters.condition.size && !filters.condition.has(p.condition)) return false;
       if (filters.type.size && !filters.type.has(p.type)) return false;
-      if (filters.availability.size && !filters.availability.has(p.availability)) return false;
+      if (filters.availability.size && !filters.availability.has(effectiveAvailability(p))) return false;
       if (filters.engine.size && !filters.engine.has(p.engine)) return false;
 
       if (filters.number) {
@@ -586,13 +596,13 @@ export default function App() {
     <div className="min-h-screen bg-neutral-950 text-neutral-100">
       {/* Header */}
       <header ref={headerRef} className="fixed top-0 inset-x-0 z-50 bg-neutral-950/60 backdrop-blur-md border-b border-neutral-800">
-        <div className="mx-auto max-w-7xl px-4 py-3 flex items-center gap-4">
+        <div className="mx-auto max-w-7xl px-4 py-3 flex items-center gap-5">
           <div className="flex flex-wrap items-center gap-2">
             <img src="/dh-logo.png" alt="Diesel Hub" className="h-8 w-8 object-contain" />
             <div className="font-bold tracking-tight">Diesel Hub</div>
           </div>
 
-          <div className="flex-1 max-w-xl">
+          <div className="flex-1">
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
@@ -646,18 +656,22 @@ export default function App() {
               </a>
             </div>
 
-            <h1 className="text-3xl md:text-4xl font-extrabold leading-tight">
-              Форсунки та ПНВТ Common Rail
-              <span className="block text-yellow-400">в наявності та з гарантією</span>
-            </h1>
+            <h1 className="text-3xl md:text-4xl font-extrabold leading-tight md:whitespace-nowrap">
+  <span className="inline md:hidden">Форсунки та ПНВТ Common Rail</span>
+  <span className="hidden md:inline">Форсунки та ПНВТ Common Rail від Diesel Hub</span>
+  <span className="block text-yellow-400">в наявності, перевірені та з гарантією</span>
+</h1>
             <p className="mt-3 text-neutral-300">
               Швидкий пошук за OEM і кросс-номерами. Чесний стан: нове / відновлене. Відправка по
               Україні.
             </p>
           </div>
-          <div className="md:justify-self-end">
-            <div className="rounded-2xl border border-neutral-800 bg-gradient-to-br from-neutral-900 to-neutral-950 p-4 mt-3">
+          <div className="md:justify-self-end md:self-center">
+            <div className="rounded-2xl border border-neutral-800 bg-gradient-to-br from-neutral-900 to-neutral-950 p-4">
               <ul className="text-base text-white leading-tight space-y-1 list-disc pl-5">
+  <li>
+    <a href="tel:+380995507055" className="text-[#ffd200] hover:underline">099 550 70 55</a> <span className="text-white">консультація</span>
+  </li>
   <li>
     <a href="#/warranty" className="text-white hover:underline">Ознайомитися з умовами гарантії</a>
   </li>
@@ -870,7 +884,7 @@ export default function App() {
                 <div className="p-4 space-y-2 flex-1 flex flex-col">
                   <div className="flex items-center justify-between">
                     <h3 className="font-semibold tracking-tight">{p.number}</h3>
-                    {p.availability === "В наявності" ? (
+                    {effectiveAvailability(p) === "В наявності" ? (
                       <span className="text-xs px-2 py-1 rounded-full border border-emerald-400 text-emerald-400">
                         В наявності · {p.qty} шт
                       </span>
@@ -1080,7 +1094,7 @@ export default function App() {
                   <div className="flex items-center gap-2"><span className="text-white font-semibold text-2xl"><span className="text-white font-semibold text-2xl">Ціна</span></span> <div className="text-2xl font-extrabold text-yellow-400">
                     {(productOpen.price || 0).toLocaleString("uk-UA")} ₴
                   </div></div>
-                  {productOpen.availability === "В наявності" ? (
+                  {effectiveAvailability(productOpen) === "В наявності" ? (
                     <span className="text-xs px-2 py-1 rounded-full border border-emerald-400 text-emerald-400">
                       В наявності · {productOpen.qty} шт
                     </span>
@@ -1483,8 +1497,8 @@ export default function App() {
       state = s.includes("віднов") || s.includes("reman") || s.includes("refurb") ? "Відновлене"
             : (s.includes("нов") || s.includes("new") ? "Нове" : rawState);
     }
-    const stockNum = (typeof it.stock === "number" ? it.stock : (typeof it.available === "number" ? it.available : null));
-    const avail = it.availability || it.availabilityText || it.avail || (stockNum !== null ? (stockNum > 0 ? "В наявності" : "Під замовлення") : "");
+    const stockNum = (function(){ const s = getProductStockById(products, it.id); return (typeof s==="number" ? s : (typeof it.stock==="number" ? it.stock : (typeof it.available==="number" ? it.available : null))); })();
+    const avail = (stockNum !== null ? (stockNum > 0 ? "В наявності" : "Під замовлення") : effectiveAvailability(it));
     const partTypeRaw = (it.type || it.partType || it.category || it.group || "").toString();
     const partType = partTypeRaw ? partTypeRaw.charAt(0).toUpperCase() + partTypeRaw.slice(1).toLowerCase() : "";
     const qty = Math.max(1, it.qty || 1);
