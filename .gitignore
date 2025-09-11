@@ -16,3 +16,6 @@ dist/
 
 # Vite cache
 .vite/
+
+# backups
+*.bak
