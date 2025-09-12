@@ -38,7 +38,7 @@ function Textarea({ label, ...props }) {
 /* ===== константы ===== */
 const MANUFACTURERS = ["Bosch", "Denso", "Delphi", "Siemens VDO", "Continental"];
 const CONDITIONS = ["Нове", "Відновлене"];
-const TYPES = ["Форсунка", "ПНВТ", "Клапан"];
+const TYPES = ["Форсунка","ПНВТ","Клапан","Пружина розпилювача","Ремкомплект","Коннектор","Гайка"];
 const AVAILABILITIES = ["В наявності", "Під замовлення"];
 
 /* ===== страница ===== */
@@ -270,6 +270,7 @@ const [err, setErr] = useState("");
     number: "",
     oem: "",
     cross: "",
+    compat_for: "",
     manufacturer: MANUFACTURERS[0],
     condition: CONDITIONS[0],
     type: TYPES[0],
@@ -303,6 +304,7 @@ const [err, setErr] = useState("");
       number: f.number.trim(),
       oem: f.oem.trim() || null,
       cross: parseListComma(f.cross),
+      compat_for: parseListComma(f.compat_for),
       manufacturer: f.manufacturer,
       condition: f.condition,
       type: f.type,
@@ -332,6 +334,7 @@ const [err, setErr] = useState("");
       number: "",
       oem: "",
       cross: "",
+      compat_for: "",
       manufacturer: MANUFACTURERS[0],
       condition: CONDITIONS[0],
       type: TYPES[0],
@@ -725,6 +728,11 @@ const [err, setErr] = useState("");
             label="Крос-номери (через кому)"
             value={f.cross}
             onChange={(e) => setF((s) => ({ ...s, cross: e.target.value }))}
+          />
+          <Input
+            label="Комплектуючі для (через кому — OEM/номер основного товару)"
+            value={f.compat_for}
+            onChange={(e) => setF((s) => ({ ...s, compat_for: e.target.value }))}
           />
 
           <div className="grid grid-cols-2 gap-3">

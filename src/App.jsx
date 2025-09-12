@@ -18,7 +18,7 @@ function getProductStockById(products, id) {
 }
 
 // Список типів — обовʼязково є "Клапан"
-const TYPES = ["Форсунка", "ПНВТ", "Клапан"];
+const TYPES = ["Форсунка", "ПНВТ", "Клапан", "Ремкомплект", "Коннектор", "Гайка", "Пружина розпилювача"];
 const CONDITIONS = ["Нове", "Відновлене"];
 const AVAILABILITIES = ["В наявності", "Під замовлення"];
 
@@ -319,6 +319,26 @@ export default function App() {
   const startedWithParamRef = useRef(false);
   const [modalQtyStr, setModalQtyStr] = useState("1");
   const [activeImg, setActiveImg] = useState(0);
+  const [productTab, setProductTab] = useState("info");
+
+  // Комплектуючі для відкритого товару
+  const compatKeys = useMemo(() => {
+    if (!productOpen) return new Set();
+    const arr = [];
+    if (productOpen.number) arr.push(String(productOpen.number));
+    if (productOpen.oem) arr.push(String(productOpen.oem));
+    if (Array.isArray(productOpen.cross)) arr.push(...productOpen.cross);
+    return new Set(arr.map((x) => String(x).trim().toUpperCase()));
+  }, [productOpen]);
+
+  const compatProducts = useMemo(() => {
+    if (!productOpen) return [];
+    return products.filter((pp) =>
+      Array.isArray(pp?.compat_for) &&
+      pp.compat_for.some((x) => compatKeys.has(String(x).trim().toUpperCase()))
+    );
+  }, [products, productOpen, compatKeys]);
+
   /* ----------- Нещодавно переглянуті ----------- */
   const [recent, setRecent] = useState([]);
   useEffect(() => {
@@ -350,6 +370,7 @@ export default function App() {
   function openProduct(p) {
     pushRecent(p.id);
     setProductOpen(p);
+    setProductTab("info");
     setActiveImg(0);
     setModalQtyStr("1");
     try {
@@ -1061,12 +1082,42 @@ export default function App() {
                   <h2 className="text-xl font-bold flex items-baseline gap-3">{productOpen.number}<span className="text-sm text-neutral-400 font-normal">{productOpen.manufacturer} · {productOpen.condition}</span></h2>
                   <button
                     onClick={closeProduct}
-                    className="text-neutral-400 hover:text-neutral-200"
+                    className="text-white hover:text-neutral-300"
                   >
                     Закрити
                   </button>
                 </div>
-                <div className="mt-3 border border-neutral-800 rounded-xl overflow-hidden">
+                
+                {/* Tabs */}
+                <div className="mt-2 flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setProductTab("info")}
+                    className={classNames(
+                      "px-3 py-1.5 rounded-lg border text-sm",
+                      productTab === "info"
+                        ? "border-yellow-400 text-yellow-400"
+                        : "border-neutral-800 text-neutral-300 hover:border-neutral-600"
+                    )}
+                  >
+                    Інформація
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setProductTab("parts")}
+                    className={classNames(
+                      "px-3 py-1.5 rounded-lg border text-sm",
+                      productTab === "parts"
+                        ? "border-yellow-400 text-yellow-400"
+                        : "border-neutral-800 text-neutral-300 hover:border-neutral-600"
+                    )}
+                  >
+                    Комплектуючі деталі
+                  </button>
+                </div>
+                {/* Tabs content */}
+                {productTab === "info" ? (
+                  <div className="mt-3 border border-neutral-800 rounded-xl overflow-hidden">
                   <div className="divide-y divide-neutral-800 text-sm">
                     <div className="flex flex-wrap items-baseline gap-2 px-3 py-2">
                       <span className="text-neutral-400 text-left">OEM Номер:</span>
@@ -1090,7 +1141,58 @@ export default function App() {
                     </div>
                   </div>
                 </div>
-                <div className="flex items-center justify-between mt-4">
+                
+                ) : (
+                  <div className="mt-3 border border-neutral-800 rounded-xl overflow-hidden">
+                    {compatProducts.length === 0 ? (
+                      <div className="px-4 py-6 text-neutral-400 text-sm">
+                        Немає комплектуючих для цього товару.
+                      </div>
+                    ) : (
+                      <ul className="divide-y divide-neutral-800">
+  {compatProducts.map((cp) => (
+    <li key={cp.id} className="grid grid-cols-[1fr_auto_auto_auto] items-center gap-3 px-3 py-2">
+      {/* Левый блок: номер полностью + маленький тип снизу */}
+      <div className="min-w-0">
+        <div className="font-medium text-neutral-100 break-words">{cp.number || '—'}</div>
+        <div className="text-xs text-neutral-400 mt-0.5">{cp.type}</div>
+      </div>
+
+      {/* Цена в один ряд */}
+      <div className="justify-self-end text-sm font-semibold text-yellow-400">
+        {(cp.price || 0).toLocaleString('uk-UA')} ₴
+      </div>
+
+      {/* Статус наличия */}
+      <div className="justify-self-end">
+        {Number(cp.qty) > 0 ? (
+          <span className="text-xs px-2 py-0.5 rounded-full border border-green-600 text-green-400">
+            В наявності
+          </span>
+        ) : (
+          <span className="text-xs px-2 py-0.5 rounded-full border border-yellow-600 text-yellow-400">
+            Під замовлення
+          </span>
+        )}
+      </div>
+
+      {/* Кнопка справа */}
+      <div className="justify-self-end">
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); addToCart(cp); }}
+          className="text-xs rounded-lg border border-neutral-700 px-2 py-1 hover:border-yellow-400"
+        >
+          Додати в кошик
+        </button>
+      </div>
+    </li>
+  ))}
+</ul>
+                    )}
+                  </div>
+                )}
+<div className="flex items-center justify-between mt-4">
                   <div className="flex items-center gap-2"><span className="text-white font-semibold text-2xl"><span className="text-white font-semibold text-2xl">Ціна</span></span> <div className="text-2xl font-extrabold text-yellow-400">
                     {(productOpen.price || 0).toLocaleString("uk-UA")} ₴
                   </div></div>
@@ -1152,7 +1254,7 @@ export default function App() {
           <div className="absolute right-0 top-0 h-full w-full max-w-md bg-neutral-950 border-l border-neutral-800 p-4 overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-xl font-bold">Кошик</h2>
-              <button onClick={() => setCartOpen(false)} className="text-neutral-400 hover:text-neutral-200">
+              <button onClick={() => setCartOpen(false)} className="text-white hover:text-neutral-300">
                 Закрити
               </button>
             </div>
@@ -1252,7 +1354,7 @@ export default function App() {
     <div className="absolute inset-x-0 top-10 mx-auto max-w-4xl bg-neutral-950 border border-neutral-800 rounded-2xl overflow-hidden">
       <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-800">
         <div className="text-lg font-semibold">Оформлення</div>
-        <button onClick={() => setCheckoutOpen(false)} className="text-neutral-400 hover:text-neutral-200">Закрити</button>
+        <button onClick={() => setCheckoutOpen(false)} className="text-white hover:text-neutral-300">Закрити</button>
       </div>
 
       {/* Контент: скролл внутрь, чтобы окно было ниже */}
