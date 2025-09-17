@@ -1,46 +1,68 @@
 // src/main.jsx
 import React from "react";
 import { createRoot } from "react-dom/client";
+import "./index.css"; // важно: стили (Tailwind/глобальные)
+
 import App from "./App.jsx";
 import Warranty from "./Warranty.jsx";
-import AdminPanel from "./admin.jsx"; // адмінка
 import TradeIn from "./TradeIn.jsx";
 import PartnersSTO from "./PartnersSTO.jsx";
-import "./index.css";
+import Admin from "./admin.jsx";          // 👈 адмінка
+
+// юр. страницы
+import Offer from "./Offer.jsx";
+import Privacy from "./Privacy.jsx";
+import PaymentDelivery from "./PaymentDelivery.jsx";
 
 const root = createRoot(document.getElementById("root"));
 
-function normalizeHash(h) {
-  if (!h) return "#/";
-  if (h === "#admin") return "#/admin";
-  if (h === "#warranty") return "#/warranty";
-  if (h === "#trade-in") return "#/trade-in";
-  if (h === "#partners-sto" || h === "#partners" || h === "#sto") return "#/partners-sto";
-  return h.startsWith("#/") ? h : "#/";
-}
-
 function renderByHash() {
-  const h = normalizeHash(window.location.hash);
-  switch (h) {
-    case "#/admin":
-      root.render(<AdminPanel />);
+  const hash = window.location.hash || "#/";
+
+  switch (hash) {
+    case "#/":
+    case "#":
+      root.render(<App />);
       break;
+
+    case "#/admin":                       // 👈 роут адмінки
+      root.render(<Admin />);
+      break;
+
     case "#/warranty":
       root.render(<Warranty />);
       break;
+
     case "#/trade-in":
       root.render(<TradeIn />);
       break;
+
     case "#/partners-sto":
       root.render(<PartnersSTO />);
       break;
-    case "#/":
+
+    case "#/offer":
+      root.render(<Offer />);
+      break;
+
+    case "#/privacy":
+      root.render(<Privacy />);
+      break;
+
+    case "#/payment":
+      root.render(<PaymentDelivery />);
+      break;
+
     default:
       root.render(<App />);
       break;
   }
 }
 
-// Перший рендер і підписка на зміни hash
 window.addEventListener("hashchange", renderByHash);
+
+// первый рендер
+if (!window.location.hash) {
+  window.location.hash = "#/";
+}
 renderByHash();

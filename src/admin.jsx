@@ -1,6 +1,8 @@
 // src/admin.jsx
 import React, { useEffect, useMemo, useState } from "react";
 
+
+
 // Базовый URL API для продакшна (например, https://diesel-api.onrender.com)
 // ЛОКАЛЬНО можно оставить пустым (тогда будут ходить на /api через прокси Vite)
 const API = import.meta.env.VITE_API_BASE || "";
@@ -38,16 +40,38 @@ function Textarea({ label, ...props }) {
 /* ===== константы ===== */
 const MANUFACTURERS = ["Bosch", "Denso", "Delphi", "Siemens VDO", "Continental"];
 const CONDITIONS = ["Нове", "Відновлене"];
-const TYPES = ["Форсунка","ПНВТ","Клапан","Пружина розпилювача","Ремкомплект","Коннектор","Гайка"];
+const TYPES = ["Форсунка", "ПНВТ", "Клапан", "Пружина розпилювача", "Ремкомплект", "Коннектор", "Гайка", "Розпилювач форсунки", "Клапан керування форсунки", "Гайка розпилювача форсунки", "Регулятор тиску", "Плунжерна пара", "Ремкомплект прокладок", "ПННТ", "Кришка ПННТ", "Пластина ПННТ", "Сальник ПНВТ", "Ремкомплект ПНВТ (напрямний ролик + башмак штовхача)", "Підшипник ПНВТ Delphi (великий)", "Клапан дозування палива насоса", "Вал ПНВТ", "Підшипник ПНВТ Delphi (малий)", "Підкачувальний насос у повному комплекті", "Напрямний ролик ПНВТ", "Штовхач ПНВТ", "Фланець насоса"];
 const AVAILABILITIES = ["В наявності", "Під замовлення"];
 
 /* ===== страница ===== */
 export default function AdminPanel() {
+  // Guard admin UI by IP (server-side check) — inside component
+  const [ipAllowed, setIpAllowed] = useState(null);
+  useEffect(() => {
+    (async () => {
+      try {
+        const base = import.meta.env.VITE_API_BASE || "";
+        const r = await fetch(base + "/api/admin/allow-ip");
+        const j = await r.json();
+        setIpAllowed(!!j.allowed);
+      } catch (e) { setIpAllowed(false); }
+    })();
+  }, []);
+  if (ipAllowed === false) {
+    return (
+      <div className="min-h-screen bg-black text-center text-neutral-300 flex items-center justify-center">
+        <div className="p-6 rounded-xl border border-neutral-800 bg-neutral-950 max-w-md">
+          <div className="text-xl font-semibold mb-2">Доступ за IP заборонено</div>
+          <div className="text-sm text-neutral-400">Ваш IP не у білому списку. Зверніться до адміністратора.</div>
+        </div>
+      </div>
+    );
+  }
+
   /* --- токен --- */
   const [token, setToken] = useState(localStorage.getItem("dh_admin_token") || "");
   const [tokenInput, setTokenInput] = useState("");
   
-
   // --- статус API/токена ---
   const [apiOk, setApiOk] = useState(null); // null=неизвестно, true=OK, false=нет доступа
 
@@ -63,23 +87,23 @@ export default function AdminPanel() {
     }
     return resp;
   }
+
   /* ===== ORDERS: state/helpers ===== */
   const [ordersOpen, setOrdersOpen] = useState(false);
-const [ordersLoading, setOrdersLoading] = useState(false);
+  const [ordersLoading, setOrdersLoading] = useState(false);
   const [orders, setOrders] = useState([]);
   const [ordersErr, setOrdersErr] = useState("");
   const [orderDetails, setOrderDetails] = useState(null);
-  
   useEffect(() => {
     const lock = ordersOpen || !!orderDetails;
     const prev = document.body.style.overflow;
     if (lock) document.body.style.overflow = 'hidden';
     return () => { document.body.style.overflow = prev; };
   }, [ordersOpen, orderDetails]);
-const [orderStatus, setOrderStatus] = useState("");
+  const [orderStatus, setOrderStatus] = useState("");
   const [orderPayment, setOrderPayment] = useState("");
-
   const [orderComment, setOrderComment] = useState("");
+
   // Пошук по замовленнях
   const [ordersSearch, setOrdersSearch] = useState("");
   // Мапа реальних номерів (№) для кожного id по початковому списку (нові зверху)
@@ -147,7 +171,6 @@ const [orderStatus, setOrderStatus] = useState("");
     }
   }
 
-  
   async function saveOrderPayment() {
     if (!orderDetails) return;
     try {
@@ -162,7 +185,7 @@ const [orderStatus, setOrderStatus] = useState("");
       alert('Збережено');
     } catch(e) { alert('Не вдалося зберегти спосіб оплати'); }
   }
-async function saveOrderStatus() {
+  async function saveOrderStatus() {
     if (!orderDetails) return;
     try {
       const r = await adminFetch(`/api/admin/orders/${orderDetails.id}`, {
@@ -177,7 +200,6 @@ async function saveOrderStatus() {
       alert('Збережено');
     } catch(e) { alert('Не вдалося зберегти статус'); }
   }
-
 
   // Проверка токена при входе + периодический пинг
   useEffect(() => {
@@ -199,7 +221,7 @@ async function saveOrderStatus() {
     timer = setInterval(check, 30000);
     return () => clearInterval(timer);
   }, [token]);
-const [err, setErr] = useState("");
+  const [err, setErr] = useState("");
 
   /* --- список товаров --- */
   async function patchProduct(id, patch) {
@@ -216,9 +238,58 @@ const [err, setErr] = useState("");
     const ok = await patchProduct(id, { qty: next });
     if (ok) setProducts(prev=>prev.map(x=> x.id===id ? { ...x, qty: next } : x));
   }
+  // --- порядок и закрепление ---
+  async function changeOrder(id, delta) {
+    const p = products.find((x) => x.id === id);
+    const cur = Number(p && p.sort_order != null ? p.sort_order : 0) || 0;
+    const next = cur + (Number(delta) || 0);
+    const ok = await patchProduct(id, { sort_order: next });
+    if (ok) setProducts((arr) => arr.map((x) => (x.id === id ? { ...x, sort_order: next } : x)));
+  }
+  async function togglePinned(id) {
+    const p = products.find((x) => x.id === id);
+    const next = !Boolean(p && p.pinned);
+    const ok = await patchProduct(id, { pinned: next });
+    if (ok) setProducts((arr) => arr.map((x) => (x.id === id ? { ...x, pinned: next } : x)));
+  }
 
   const [products, setProducts] = useState([]);
-  const [photoEdit, setPhotoEdit] = useState(null); // продукт для модалки фото
+  const [photoEdit, setPhotoEdit] = useState(null); 
+  const [productEdit, setProductEdit] = useState(null); // продукт для модалки редагування
+
+  function openProductEdit(p) {
+    setProductEdit({
+      ...p,
+      _crossText: Array.isArray(p.cross) ? p.cross.join(", ") : (p.cross || ""),
+      _compatText: Array.isArray(p.compat_for) ? p.compat_for.join(", ") : (p.compat_for || ""),
+      _imagesText: Array.isArray(p.images) ? p.images.join("\n") : (p.images || ""),
+    });
+  }
+  function closeProductEdit() { setProductEdit(null); }
+
+  async function saveProductEdit() {
+    if (!productEdit) return;
+    const patch = {
+      number: productEdit.number || "",
+      oem: productEdit.oem || "",
+      cross: String(productEdit._crossText || "").split(",").map(s=>s.trim()).filter(Boolean),
+      compat_for: String(productEdit._compatText || "").split(",").map(s=>s.trim()).filter(Boolean),
+      manufacturer: productEdit.manufacturer || "",
+      condition: productEdit.condition || "",
+      type: productEdit.type || "",
+      availability: productEdit.availability || "",
+      qty: Number(productEdit.qty) || 0,
+      price: Number(productEdit.price) || 0,
+      engine: (productEdit.engine==="" || productEdit.engine==null) ? null : Number(productEdit.engine),
+      images: String(productEdit._imagesText || "").split(/\r?\n/).map(s=>s.trim()).filter(Boolean),
+    };
+    const ok = await patchProduct(productEdit.id, patch);
+    if (!ok) { alert("Не вдалося зберегти товар"); return; }
+    try { setProducts(await fetchProductsRaw()); } catch {}
+    closeProductEdit();
+  }
+
+  // продукт для модалки фото
   const [search, setSearch] = useState("");
 
   // вкладка для товарів: 'list' | 'add'
@@ -231,6 +302,7 @@ const [err, setErr] = useState("");
     setDraft(prev => ({ ...prev, [id]: { ...(prev[id]||{}), [field]: value } }));
   }
   function resetDraft() { setDraft({}); }
+
   // допоміжне: отримати товари масивом (без setState)
   async function fetchProductsRaw() {
     try {
@@ -242,8 +314,6 @@ const [err, setErr] = useState("");
     }
   }
 
-
-
   async function loadProducts() {
     try {
       const r = await fetch(`${API}/api/products`);
@@ -253,9 +323,31 @@ const [err, setErr] = useState("");
       setProducts([]);
     }
   }
+
+  // безопасный рефреш списка + поддержка открытых модалок
+  async function reloadProductsAndKeepModals() {
+    try {
+      const list = await fetchProductsRaw();
+      setProducts(list);
+      if (photoEdit) {
+        const latest = list.find(x => x.id === photoEdit.id);
+        if (latest) setPhotoEdit(latest);
+      }
+      if (productEdit) {
+        const latest = list.find(x => x.id === productEdit.id);
+        if (latest) {
+          openProductEdit(latest);
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+
   useEffect(() => {
     loadProducts();
   }, []);
+
   const filteredProducts = useMemo(() => {
     const q = (search || "").trim().toLowerCase();
     if (!q) return products;
@@ -279,6 +371,8 @@ const [err, setErr] = useState("");
     price: "0",
     engine: "",
     images: "", // по строке на URL
+    pinned: false,
+    sort_order: "0"
   });
 
   const parseListComma = (s) =>
@@ -292,6 +386,15 @@ const [err, setErr] = useState("");
       .split(/\r?\n/)
       .map((x) => x.trim())
       .filter(Boolean);
+
+  // SKU генератор <number>-N|R
+  function makeSku(number, condition) {
+    const base = String(number || "").trim();
+    if (!base) return "";
+    if (/-[NR]$/i.test(base)) return base.toUpperCase();
+    const suffix = condition === "Нове" ? "N" : "R";
+    return `${base}-${suffix}`;
+  }
 
   async function addProduct() {
     setErr("");
@@ -313,14 +416,14 @@ const [err, setErr] = useState("");
       price: Number(f.price),
       engine: f.engine ? Number(f.engine) : null,
       images: parseLines(f.images),
+      sort_order: Number(f.sort_order) || 0,
+      pinned: !!f.pinned,
     };
+    payload.sku = makeSku(payload.number, payload.condition);
 
     const r = await adminFetch(`/api/admin/product`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-admin-token": token,
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
 
@@ -343,8 +446,10 @@ const [err, setErr] = useState("");
       price: "0",
       engine: "",
       images: "",
+      pinned: false,
+      sort_order: "0",
     });
-    await refreshPhotoModal(productId);
+    await reloadProductsAndKeepModals();
     alert("Товар додано");
   }
 
@@ -352,14 +457,16 @@ const [err, setErr] = useState("");
     if (!confirm("Видалити товар?")) return;
     const r = await adminFetch(`/api/admin/product/${id}`, {
       method: "DELETE",
-      headers: { "x-admin-token": token },
     });
     if (!r.ok) {
       const e = await r.json().catch(() => ({}));
       alert(e.error || "Помилка");
       return;
     }
-    await refreshPhotoModal(productId);
+    if (productEdit && productEdit.id === id) setProductEdit(null);
+    if (photoEdit && photoEdit.id === id) setPhotoEdit(null);
+    await reloadProductsAndKeepModals();
+    alert("Товар видалено");
   }
 
   // Сохраняем ТОЛЬКО редактируемые поля (цена/кол-во/наличие)
@@ -372,10 +479,7 @@ const [err, setErr] = useState("");
 
     const r = await adminFetch(`/api/admin/product/${p.id}`, {
       method: "PATCH",
-      headers: {
-        "Content-Type": "application/json",
-        "x-admin-token": token,
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(patch),
     });
 
@@ -384,24 +488,23 @@ const [err, setErr] = useState("");
       alert(e.error || "Помилка");
       return;
     }
-    await refreshPhotoModal(productId);
+    await reloadProductsAndKeepModals();
   }
 
   /* ===== загрузка/удаление картинок ===== */
   async function refreshPhotoModal(productId) {
     try {
+      const list = await fetchProductsRaw();
+      setProducts(list);
       if (photoEdit && photoEdit.id === productId) {
-        const list = await fetchProductsRaw();
-        setProducts(list);
         const latest = list.find(x => x.id === productId);
         if (latest) setPhotoEdit(latest);
-      } else {
-        await refreshPhotoModal(productId);
       }
     } catch {
       // ignore
     }
   }
+
   async function uploadImages(productId, files) {
     if (!files || !files.length) return;
     const fd = new FormData();
@@ -409,7 +512,7 @@ const [err, setErr] = useState("");
 
     const r = await adminFetch(`/api/admin/product/${productId}/upload`, {
       method: "POST",
-      headers: { "x-admin-token": token }, // ВАЖНО: без Content-Type
+      headers: { "x-admin-token": token }, // без Content-Type
       body: fd,
     });
 
@@ -424,10 +527,7 @@ const [err, setErr] = useState("");
   async function deleteOneImage(productId, url) {
     const r = await adminFetch(`/api/admin/product/${productId}/image`, {
       method: "DELETE",
-      headers: {
-        "Content-Type": "application/json",
-        "x-admin-token": token,
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ url }),
     });
     if (!r.ok) {
@@ -439,11 +539,11 @@ const [err, setErr] = useState("");
   }
 
   /* ===== экран логина ===== */
-  // Показываем форму входа, пока токен не подтверждён сервером
   if (apiOk !== true) {
     return (
       <div className="min-h-screen bg-neutral-950 text-neutral-100 grid place-items-center">
-        <div className="w-full max-w-md rounded-2xl border border-neutral-800 p-6">          <input
+        <div className="w-full max-w-md rounded-2xl border border-neutral-800 p-6">
+          <input
             type="password"
             value={tokenInput}
             onChange={(e) => setTokenInput(e.target.value.trim())}
@@ -474,7 +574,6 @@ const [err, setErr] = useState("");
     );
   }
 
-  
   /* ===== експорт/імпорт ===== */
   async function downloadAdmin(url, filename) {
     try {
@@ -534,7 +633,7 @@ const [err, setErr] = useState("");
         return;
       }
       alert(`Готово. Оновлено: ${rep.updated || 0}, Додано: ${rep.created || 0}`);
-      await refreshPhotoModal(productId);
+      await reloadProductsAndKeepModals();
     } catch (e) {
       alert("Не вдалося імпортувати файл");
     } finally {
@@ -543,7 +642,6 @@ const [err, setErr] = useState("");
     }
   }
     
-  
   /* === КОПИРОВАНИЕ В GOOGLE SHEETS (TSV) И ВСТАВКА ИЗ SHEETS === */
   const COLS = ["id","number","oem","cross","manufacturer","condition","type","engine","availability","qty","price","images"];
 
@@ -643,6 +741,8 @@ const [err, setErr] = useState("");
             const ok = await patchProduct(targetId, payload);
             if (ok) updated++; else failed++;
           } else {
+            // при создании — автогенерация SKU
+            payload.sku = makeSku(payload.number, payload.condition);
             const resp = await adminFetch(`/api/admin/product`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
@@ -653,7 +753,7 @@ const [err, setErr] = useState("");
         } catch(e) { failed++; }
       }
       alert(`Готово. Оновлено: ${updated}, Додано: ${created}, Помилок: ${failed}`);
-      await refreshPhotoModal(productId);
+      await reloadProductsAndKeepModals();
     } catch (e) {
       alert("Не вдалося імпортувати з буфера");
     }
@@ -846,441 +946,533 @@ const [err, setErr] = useState("");
         </section>)}
 
         {/* список товаров */}
-        
-{productsTab==='list' && (<section className="rounded-2xl border border-neutral-800 p-4 md:col-span-2">
-  <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-3">
-    <div className="text-lg font-semibold">Товари ({products.length})</div>
-    <div className="flex items-center gap-2">
-      <button
-        onClick={loadProducts}
-        className="text-sm rounded-lg border border-neutral-700 px-3 py-1.5 hover:border-yellow-400"
-      >
-        Оновити
-      </button>
-      <button
-        onClick={() => { setEditAll(e => !e); if (!editAll) resetDraft(); }}
-        className={"text-sm rounded-lg px-3 py-1.5 border " + (editAll ? "border-emerald-400 text-emerald-300" : "border-neutral-700 hover:border-yellow-400")}
-      >
-        {editAll ? "Вийти з редагування" : "Редагувати всі"}
-      </button>
-      {editAll && (
-        <>
-          <button
-            onClick={async () => {
-              // нормалізуємо патчі і відправляємо
-              const entries = Object.entries(draft || {});
-              let failed = [];
-              for (const [id, patch] of entries) {
-                if (!patch || !Object.keys(patch).length) continue;
-                const norm = {};
-                if (patch.number !== undefined) norm.number = String(patch.number || "").trim();
-                if (patch.oem !== undefined) norm.oem = String(patch.oem || "").trim();
-                if (patch.cross !== undefined) {
-                  const list = String(patch.cross||"")
-                    .split(",")
-                    .map(x=>x.trim())
-                    .filter(Boolean);
-                  norm.cross = list;
-                }
-                if (patch.manufacturer !== undefined) norm.manufacturer = patch.manufacturer;
-                if (patch.condition !== undefined) norm.condition = patch.condition;
-                if (patch.type !== undefined) norm.type = patch.type;
-                if (patch.availability !== undefined) norm.availability = patch.availability;
-                if (patch.qty !== undefined) {
-                  const n = Number(patch.qty);
-                  norm.qty = isNaN(n) ? 0 : Math.max(0, n);
-                }
-                if (patch.price !== undefined) {
-                  const n = Number(patch.price);
-                  norm.price = isNaN(n) ? 0 : Math.max(0, n);
-                }
-                if (patch.engine !== undefined) norm.engine = String(patch.engine||"").trim();
-
-                const ok = await patchProduct(id, norm);
-                if (!ok) failed.push(id);
-              }
-              if (failed.length) alert("Не збережено: " + failed.join(", "));
-              await refreshPhotoModal(productId);
-              resetDraft();
-              setEditAll(false);
-            }}
-            className="text-sm rounded-lg border border-emerald-500 text-emerald-300 px-3 py-1.5 hover:bg-emerald-600/10"
-          >
-            Зберегти всі
-          </button>
-          <button
-            onClick={() => { resetDraft(); setEditAll(false); }}
-            className="text-sm rounded-lg border border-neutral-700 px-3 py-1.5 hover:border-yellow-400"
-          >
-            Скасувати
-          </button>
-        </>
-      )}
-    </div>
-  </div>
-
-  <div className="mb-3 flex items-center gap-2">
-    <input
-      value={search}
-      onChange={(e) => setSearch(e.target.value)}
-      placeholder="Пошук: номер / OEM / виробник / тип"
-      className="w-full rounded-lg bg-neutral-900 border border-neutral-800 px-3 py-2 text-sm outline-none focus:border-yellow-400"
-    />
-  </div>
-
-  <div className="overflow-auto rounded-xl border border-neutral-900">
-    <table className="min-w-[1200px] w-full text-sm">
-      <thead className="bg-neutral-900/40 border-b border-neutral-800 sticky top-0">
-        <tr>
-          <th className="text-center px-3 py-2 w-16 sticky left-0 z-20 bg-neutral-950">ID</th>
-          <th className="text-center px-3 py-2 w-40 sticky z-10 bg-neutral-950" style={{left:"4rem"}}>Номер</th>
-          <th className="text-center px-3 py-2 w-40">OEM</th>
-          <th className="text-center px-3 py-2 w-28">Крос-номери</th>
-          <th className="text-center px-3 py-2 w-40">Виробник</th>
-          <th className="text-center px-3 py-2 w-40">Стан</th>
-          <th className="text-center px-3 py-2 w-40">Тип</th>
-          <th className="text-center px-3 py-2 w-40">Наявність</th>
-          <th className="text-center px-3 py-2 w-28">К-сть</th>
-          <th className="text-center px-3 py-2 w-32">Ціна ₴</th>
-          <th className="text-center px-3 py-2 w-28">Обʼєм</th>
-          <th className="text-center px-3 py-2 w-56">Дії</th>
-        </tr>
-      </thead>
-      <tbody>
-        {filteredProducts.map((p) => {
-          const d = draft[p.id] || {};
-          const v = (field, fallback) => d[field] !== undefined ? d[field] : fallback;
-          return (
-            <tr key={p.id} className="border-b border-neutral-900">
-              <td className="px-3 py-2 text-neutral-400 sticky left-0 bg-neutral-950 text-center">{String(p.id).slice(-6)}</td>
-              <td className="px-3 py-2 text-center">
-                {editAll ? (
-                  <input
-                    value={v('oem', p.oem || '')}
-                    onChange={(e)=>setDraftField(p.id, 'oem', e.target.value)}
-                    className="w-full bg-neutral-900 border border-neutral-800 rounded-lg px-2 py-1 outline-none focus:border-yellow-400"
-                  />
-                ) : (<div className="truncate max-w-[180px]">{p.oem || '—'}</div>)}
-              </td>
-
-              <td className="px-3 py-2 sticky bg-neutral-950 text-center" style={{left:"4rem"}}>
-                {editAll ? (
-                  <input
-                    value={v('number', p.number || '')}
-                    onChange={(e)=>setDraftField(p.id, 'number', e.target.value)}
-                    className="w-full bg-neutral-900 border border-neutral-800 rounded-lg px-2 py-1 outline-none focus:border-yellow-400"
-                  />
-                ) : (<div className="truncate max-w-[180px]">{p.number || '—'}</div>)}
-              </td>
-              <td className="px-3 py-2 text-center">{editAll ? (<input value={v('cross', (Array.isArray(p.cross)?p.cross.join(', '):''))} onChange={(e)=>setDraftField(p.id, 'cross', e.target.value)} className="w-full bg-neutral-900 border border-neutral-800 rounded-lg px-2 py-1 outline-none focus:border-yellow-400" placeholder="comma, separated"/>) : (<div className="truncate max-w-[12ch] text-neutral-300">{truncateText(Array.isArray(p.cross)?p.cross.join(', '):'', 10) || '—'}</div>)}</td>
-              <td className="px-3 py-2 text-center">
-                {editAll ? (
-                  <select
-                    value={v('manufacturer', p.manufacturer || MANUFACTURERS[0])}
-                    onChange={(e)=>setDraftField(p.id, 'manufacturer', e.target.value)}
-                    className="w-full bg-neutral-900 border border-neutral-800 rounded-lg px-2 py-1 outline-none"
-                  >
-                    {MANUFACTURERS.map(m => <option key={m} value={m}>{m}</option>)}
-                  </select>
-                ) : (p.manufacturer || '—')}
-              </td>
-              <td className="px-3 py-2 text-center">
-                {editAll ? (
-                  <select
-                    value={v('condition', p.condition || CONDITIONS[0])}
-                    onChange={(e)=>setDraftField(p.id, 'condition', e.target.value)}
-                    className="w-full bg-neutral-900 border border-neutral-800 rounded-lg px-2 py-1 outline-none"
-                  >
-                    {CONDITIONS.map(m => <option key={m} value={m}>{m}</option>)}
-                  </select>
-                ) : (p.condition || '—')}
-              </td>
-              <td className="px-3 py-2 text-center">
-                {editAll ? (
-                  <select
-                    value={v('type', p.type || TYPES[0])}
-                    onChange={(e)=>setDraftField(p.id, 'type', e.target.value)}
-                    className="w-full bg-neutral-900 border border-neutral-800 rounded-lg px-2 py-1 outline-none"
-                  >
-                    {TYPES.map(m => <option key={m} value={m}>{m}</option>)}
-                  </select>
-                ) : (p.type || '—')}
-              </td>
-              <td className="px-3 py-2 text-center">
-                {editAll ? (
-                  <select
-                    value={v('availability', p.availability || AVAILABILITIES[0])}
-                    onChange={(e)=>setDraftField(p.id, 'availability', e.target.value)}
-                    className="w-full bg-neutral-900 border border-neutral-800 rounded-lg px-2 py-1 outline-none"
-                  >
-                    {AVAILABILITIES.map(m => <option key={m} value={m}>{m}</option>)}
-                  </select>
-                ) : (p.availability || '—')}
-              </td>
-              <td className="px-3 py-2 text-center">
-                {editAll ? (
-                  <input
-                    value={v('qty', p.qty ?? 0)}
-                    onChange={(e)=>setDraftField(p.id, 'qty', e.target.value)}
-                    className="w-24 bg-neutral-900 border border-neutral-800 rounded-lg px-2 py-1 outline-none focus:border-yellow-400"
-                  />
-                ) : (
-                  <div className="inline-flex items-center gap-2">
-                    <button onClick={()=>changeQty(p.id, -1)} className="rounded-lg border border-neutral-700 px-2 py-1 hover:border-yellow-400">−</button>
-                    <span>{p.qty ?? 0}</span>
-                    <button onClick={()=>changeQty(p.id, +1)} className="rounded-lg border border-neutral-700 px-2 py-1 hover:border-yellow-400">+</button>
-                  </div>
-                )}
-              </td>
-              <td className="px-3 py-2 text-center">
-                {editAll ? (
-                  <input
-                    value={v('price', p.price ?? 0)}
-                    onChange={(e)=>setDraftField(p.id, 'price', e.target.value)}
-                    className="w-28 bg-neutral-900 border border-neutral-800 rounded-lg px-2 py-1 outline-none focus:border-yellow-400"
-                  />
-                ) : (p.price ?? 0)}
-              </td>
-              <td className="px-3 py-2 text-center">
-                {editAll ? (
-                  <input
-                    value={v('engine', p.engine || '')}
-                    onChange={(e)=>setDraftField(p.id, 'engine', e.target.value)}
-                    className="w-24 bg-neutral-900 border border-neutral-800 rounded-lg px-2 py-1 outline-none focus:border-yellow-400"
-                  />
-                ) : (p.engine || '—')}
-              </td>
-              <td className="px-3 py-2 text-center">
-                <div className="flex items-center gap-2 justify-center">
-                  <button onClick={()=>setPhotoEdit(p)} className="rounded-lg border border-neutral-700 px-3 py-1.5 hover:border-yellow-400 text-xs">Фото</button>
+        {productsTab==='list' && (<section className="rounded-2xl border border-neutral-800 p-4 md:col-span-2">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-3">
+            <div className="text-lg font-semibold">Товари ({products.length})</div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={loadProducts}
+                className="text-sm rounded-lg border border-neutral-700 px-3 py-1.5 hover:border-yellow-400"
+              >
+                Оновити
+              </button>
+              <button
+                onClick={() => { setEditAll(e => !e); if (!editAll) resetDraft(); }}
+                className={"text-sm rounded-lg px-3 py-1.5 border " + (editAll ? "border-emerald-400 text-emerald-300" : "border-neutral-700 hover:border-yellow-400")}
+              >
+                {editAll ? "Вийти з редагування" : "Редагувати всі"}
+              </button>
+              {editAll && (
+                <>
                   <button
-                    onClick={() => delProduct(p.id)}
-                    className="text-xs text-red-400 hover:text-red-300"
-                    title="Видалити товар"
+                    onClick={async () => {
+                      const entries = Object.entries(draft || {});
+                      let failed = [];
+                      for (const [id, patch] of entries) {
+                        if (!patch || !Object.keys(patch).length) continue;
+                        const norm = {};
+                        if (patch.number !== undefined) norm.number = String(patch.number || "").trim();
+                        if (patch.oem !== undefined) norm.oem = String(patch.oem || "").trim();
+                        if (patch.cross !== undefined) {
+                          const list = String(patch.cross||"")
+                            .split(",")
+                            .map(x=>x.trim())
+                            .filter(Boolean);
+                          norm.cross = list;
+                        }
+                        if (patch.manufacturer !== undefined) norm.manufacturer = patch.manufacturer;
+                        if (patch.condition !== undefined) norm.condition = patch.condition;
+                        if (patch.type !== undefined) norm.type = patch.type;
+                        if (patch.availability !== undefined) norm.availability = patch.availability;
+                        if (patch.qty !== undefined) {
+                          const n = Number(patch.qty);
+                          norm.qty = isNaN(n) ? 0 : Math.max(0, n);
+                        }
+                        if (patch.price !== undefined) {
+                          const n = Number(patch.price);
+                          norm.price = isNaN(n) ? 0 : Math.max(0, n);
+                        }
+                        if (patch.engine !== undefined) norm.engine = String(patch.engine||"").trim();
+
+                        const ok = await patchProduct(id, norm);
+                        if (!ok) failed.push(id);
+                      }
+                      if (failed.length) alert("Не збережено: " + failed.join(", "));
+                      await reloadProductsAndKeepModals();
+                      resetDraft();
+                      setEditAll(false);
+                    }}
+                    className="text-sm rounded-lg border border-emerald-500 text-emerald-300 px-3 py-1.5 hover:bg-emerald-600/10"
                   >
-                    Видалити
+                    Зберегти всі
                   </button>
-                </div>
-              </td>
-            </tr>
-          );
-        })}
-        {filteredProducts.length === 0 && (
-          <tr><td colSpan="12" className="py-10 text-center text-neutral-500">Поки що порожньо</td></tr>
-        )}
-      </tbody>
-    </table>
-  </div>
-</section>)}
-
-
-      
-      {/* Photo Edit Modal */}
-      {photoEdit && (
-        <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/70 p-4">
-          <div className="w-full max-w-4xl rounded-2xl border border-neutral-800 bg-neutral-950 shadow-2xl overflow-hidden">
-            <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-800">
-              <div className="flex flex-col">
-                <div className="text-lg font-semibold">Фото · {photoEdit.number || '—'}</div>
-                <div className="text-xs text-neutral-400">ID: {String(photoEdit.id).slice(-6)} {photoEdit.oem ? ' · OEM: '+photoEdit.oem : ''}</div>
-              </div>
-              <div className="flex items-center gap-2">
-                <input
-                  id="photo-upload-input"
-                  type="file"
-                  accept="image/*"
-                  multiple
-                  className="hidden"
-                  onChange={async (e)=>{
-                    const fs = e.currentTarget.files;
-                    if (fs && fs.length) await uploadImages(photoEdit.id, fs);
-                    e.currentTarget.value = "";
-                  }}
-                />
-                <label htmlFor="photo-upload-input" className="cursor-pointer rounded-lg border border-neutral-700 px-3 py-1.5 hover:border-yellow-400 text-sm">Додати фото</label>
-                <button onClick={()=>setPhotoEdit(null)} className="rounded-lg border border-neutral-700 px-3 py-1.5 hover:bg-neutral-900 text-sm">Закрити</button>
-              </div>
-            </div>
-            <div className="p-4 max-h-[70vh] overflow-auto">
-              {Array.isArray(photoEdit.images) && photoEdit.images.length ? (
-                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-                  {photoEdit.images.map((url, i)=> (
-                    <div key={i} className="relative group rounded-xl border border-neutral-800 overflow-hidden">
-                      <img src={url} alt="" className="w-full h-36 object-cover" />
-                      <button
-                        onClick={async ()=>{ await deleteOneImage(photoEdit.id, url); }}
-                        className="absolute top-2 right-2 hidden group-hover:inline-flex items-center rounded-md border border-red-500/40 bg-red-500/10 px-2 py-1 text-xs text-red-300 hover:bg-red-500/20"
-                        title="Видалити фото"
-                      >
-                        Видалити
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="text-neutral-400 text-sm">Немає фото. Додайте з кнопки «Додати фото».</div>
+                  <button
+                    onClick={() => { resetDraft(); setEditAll(false); }}
+                    className="text-sm rounded-lg border border-neutral-700 px-3 py-1.5 hover:border-yellow-400"
+                  >
+                    Скасувати
+                  </button>
+                </>
               )}
             </div>
           </div>
-        </div>
-      )}
-{/* Orders Overlay */}
-      {ordersOpen && (
-        <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/70 p-4">
-          <div className="w-full max-w-5xl max-h-[92vh] rounded-2xl border border-neutral-800 bg-neutral-950 shadow-2xl flex flex-col overflow-hidden">
-            <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-800">
-              <h2 className="text-lg font-semibold">Замовлення</h2>
-              <div className="flex items-center gap-2"><input value={ordersSearch} onChange={(e)=>setOrdersSearch(e.target.value)} placeholder="Пошук: №, імʼя, телефон, статус" className="rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm outline-none focus:border-yellow-400" />
-                <button onClick={loadOrders} className="rounded-xl border border-neutral-700 px-3 py-1.5 hover:bg-neutral-900 disabled:opacity-50" disabled={ordersLoading}>Оновити</button>
-                <button onClick={()=>setOrdersOpen(false)} className="rounded-xl border border-neutral-700 px-3 py-1.5 hover:bg-neutral-900">Закрити</button>
-              </div>
-            </div>
-            {ordersErr && <div className="px-4 py-3 text-rose-400">{ordersErr}</div>}
-            <div className="px-4 py-3 overflow-auto max-h-[70vh]">
-              <table className="w-full text-sm">
-                <thead className="text-neutral-400">
-                  <tr className="text-left">
-                    <th className="py-2 pr-3">№</th>
-                    <th className="py-2 pr-3">Дата</th>
-                    <th className="py-2 pr-3">Клієнт</th>
-                    <th className="py-2 pr-3">Телефон</th>
-                    <th className="py-2 pr-3">Доставка</th>
-                    <th className="py-2 pr-3">Сума</th>
-                    <th className="py-2 pr-3">Позицій</th>
-                    <th className="py-2 pr-3">Статус</th>
-                    <th className="py-2 pr-0 text-right">Дії</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {orders.length === 0 && (
-                    <tr><td colSpan="9" className="py-10 text-center text-neutral-500">Поки що порожньо</td></tr>
-                  )}
-                  {filteredOrders.map((o, i) => {
-                    const itemsCount = Array.isArray(o.items) ? o.items.length : (o.items && typeof o.items==='object' ? Object.keys(o.items).length : 0);
-                    return (
-                      <tr key={o.id} className="border-t border-neutral-900 hover:bg-neutral-900/40">
-                        <td className="py-2 pr-3">{seqMap.get(o.id)}</td>
-                        <td className="py-2 pr-3 whitespace-nowrap">{new Date(o.created_at).toLocaleString('uk-UA')}</td>
-                        <td className="py-2 pr-3">{truncateText(o.name || '—', 15)}</td>
-                        <td className="py-2 pr-3">{o.phone || '—'}</td>
-                        <td className="py-2 pr-3 max-w-[18rem]">{truncateText(o.delivery || '—', 10)}</td>
-                        <td className="py-2 pr-3 whitespace-nowrap">{money(o.total)}</td>
-                        <td className="py-2 pr-3">{itemsCount}</td>
-                        <td className="py-2 pr-3"><StatusBadge status={o.status} /></td>
-                        <td className="py-2 pr-0 text-right">
-                          <button onClick={()=>openOrder(o.id, seqMap.get(o.id))} className="rounded-lg border border-neutral-700 px-2 py-1 hover:bg-neutral-900">Детальніше</button>
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
+
+          <div className="mb-3 flex items-center gap-2">
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Пошук: номер / OEM / виробник / тип"
+              className="w-full rounded-lg bg-neutral-900 border border-neutral-800 px-3 py-2 text-sm outline-none focus:border-yellow-400"
+            />
           </div>
 
-          {/* Details card */}
-          {orderDetails && (
-            <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 p-4">
-              <div className="w-full max-w-3xl max-h-[92vh] rounded-2xl border border-neutral-800 bg-neutral-950 shadow-2xl flex flex-col overflow-hidden">
-                <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-800">
-                  <h3 className="text-lg font-semibold">Замовлення №{orderDetails.seq}</h3>
-                  <div className="flex items-center gap-2"> <button onClick={()=>setOrderDetails(null)} className="rounded-xl border border-neutral-700 px-3 py-1.5 hover:bg-neutral-900">Закрити</button></div>
-                </div>
+          <div className="overflow-auto rounded-xl border border-neutral-900">
+            <table className="min-w-[1200px] w-full text-sm">
+              <thead className="bg-neutral-900/40 border-b border-neutral-800 sticky top-0">
+                <tr>
+                  <th className="text-center px-3 py-2 w-16 sticky left-0 z-20 bg-neutral-950">ID</th>
+                  <th className="text-center px-3 py-2 w-40 sticky z-10 bg-neutral-950" style={{left:"4rem"}}>Номер</th>
+                  <th className="text-center px-3 py-2 w-40">OEM</th>
+                  <th className="text-center px-3 py-2 w-28">Крос-номери</th>
+                  <th className="text-center px-3 py-2 w-40">Виробник</th>
+                  <th className="text-center px-3 py-2 w-40">Стан</th>
+                  <th className="text-center px-3 py-2 w-40">Тип</th>
+                  <th className="text-center px-3 py-2 w-40">Наявність</th>
+                  <th className="text-center px-3 py-2 w-28">К-сть</th>
+                  <th className="text-center px-3 py-2 w-32">Ціна ₴</th>
+                  <th className="text-center px-3 py-2 w-28">Обʼєм</th>
+                  <th className="text-center px-3 py-2 w-28">Порядок</th>
+                  <th className="text-center px-3 py-2 w-28">Закріп.</th>
+                  <th className="text-center px-3 py-2 w-56">Дії</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredProducts.map((p) => {
+                  const d = draft[p.id] || {};
+                  const v = (field, fallback) => d[field] !== undefined ? d[field] : fallback;
+                  return (
+                    <tr key={p.id} className="border-b border-neutral-900">
+                      <td className="px-3 py-2 text-neutral-400 sticky left-0 bg-neutral-950 text-center">{String(p.id).slice(-6)}</td>
+                      <td className="px-3 py-2 text-center">
+                        {editAll ? (
+                          <input
+                            value={v('oem', p.oem || '')}
+                            onChange={(e)=>setDraftField(p.id, 'oem', e.target.value)}
+                            className="w-full bg-neutral-900 border border-neutral-800 rounded-lg px-2 py-1 outline-none focus:border-yellow-400"
+                          />
+                        ) : (<div className="truncate max-w-[180px]">{p.oem || '—'}</div>)}
+                      </td>
 
-                <div className="p-4 grid gap-4 overflow-y-auto max-h-[70vh] pr-2">
-                  <div className="grid md:grid-cols-2 gap-4">
-                    <div className="rounded-xl border border-neutral-800 p-3"><div className="text-neutral-400 text-xs">Клієнт</div><div className="text-sm">{orderDetails.name || '—'}</div></div>
-                    <div className="rounded-xl border border-neutral-800 p-3"><div className="text-neutral-400 text-xs">Телефон</div><div className="text-sm">{orderDetails.phone || '—'}</div></div>
-                    <div className="rounded-xl border border-neutral-800 p-3 md:col-span-2"><div className="text-neutral-400 text-xs">Доставка</div><div className="text-sm">{orderDetails.delivery || '—'}</div></div>
-                    {/* Спосіб оплати */}
-                    <div className="rounded-xl border border-neutral-800 p-3">
-                      <div className="text-neutral-400 text-xs">Спосіб оплати</div>
-                      <div className="mt-1 flex items-center gap-2">
-                        <select
-                          value={orderPayment}
-                          onChange={(e)=>setOrderPayment(e.target.value)}
-                          className="bg-neutral-900 border border-neutral-700 rounded-lg px-2 py-1 text-sm outline-none"
+                      <td className="px-3 py-2 sticky bg-neutral-950 text-center" style={{left:"4rem"}}>
+                        {editAll ? (
+                          <input
+                            value={v('number', p.number || '')}
+                            onChange={(e)=>setDraftField(p.id, 'number', e.target.value)}
+                            className="w-full bg-neutral-900 border border-neutral-800 rounded-lg px-2 py-1 outline-none focus:border-yellow-400"
+                          />
+                        ) : (<div className="truncate max-w-[180px]">{p.number || '—'}</div>)}
+                      </td>
+                      <td className="px-3 py-2 text-center">{editAll ? (<input value={v('cross', (Array.isArray(p.cross)?p.cross.join(', '):''))} onChange={(e)=>setDraftField(p.id, 'cross', e.target.value)} className="w-full bg-neutral-900 border border-neutral-800 rounded-lg px-2 py-1 outline-none focus:border-yellow-400" placeholder="comma, separated"/>) : (<div className="truncate max-w-[12ch] text-neutral-300">{truncateText(Array.isArray(p.cross)?p.cross.join(', '):'', 10) || '—'}</div>)}</td>
+                      <td className="px-3 py-2 text-center">
+                        {editAll ? (
+                          <select
+                            value={v('manufacturer', p.manufacturer || MANUFACTURERS[0])}
+                            onChange={(e)=>setDraftField(p.id, 'manufacturer', e.target.value)}
+                            className="w-full bg-neutral-900 border border-neutral-800 rounded-lg px-2 py-1 outline-none"
+                          >
+                            {MANUFACTURERS.map(m => <option key={m} value={m}>{m}</option>)}
+                          </select>
+                        ) : (p.manufacturer || '—')}
+                      </td>
+                      <td className="px-3 py-2 text-center">
+                        {editAll ? (
+                          <select
+                            value={v('condition', p.condition || CONDITIONS[0])}
+                            onChange={(e)=>setDraftField(p.id, 'condition', e.target.value)}
+                            className="w-full bg-neutral-900 border border-neutral-800 rounded-lg px-2 py-1 outline-none"
+                          >
+                            {CONDITIONS.map(m => <option key={m} value={m}>{m}</option>)}
+                          </select>
+                        ) : (p.condition || '—')}
+                      </td>
+                      <td className="px-3 py-2 text-center">
+                        {editAll ? (
+                          <select
+                            value={v('type', p.type || TYPES[0])}
+                            onChange={(e)=>setDraftField(p.id, 'type', e.target.value)}
+                            className="w-full bg-neutral-900 border border-neutral-800 rounded-lg px-2 py-1 outline-none"
+                          >
+                            {TYPES.map(m => <option key={m} value={m}>{m}</option>)}
+                          </select>
+                        ) : (p.type || '—')}
+                      </td>
+                      <td className="px-3 py-2 text-center">
+                        {editAll ? (
+                          <select
+                            value={v('availability', p.availability || AVAILABILITIES[0])}
+                            onChange={(e)=>setDraftField(p.id, 'availability', e.target.value)}
+                            className="w-full bg-neutral-900 border border-neutral-800 rounded-lg px-2 py-1 outline-none"
+                          >
+                            {AVAILABILITIES.map(m => <option key={m} value={m}>{m}</option>)}
+                          </select>
+                        ) : (p.availability || '—')}
+                      </td>
+                      <td className="px-3 py-2 text-center">
+                        {editAll ? (
+                          <input
+                            value={v('qty', p.qty ?? 0)}
+                            onChange={(e)=>setDraftField(p.id, 'qty', e.target.value)}
+                            className="w-24 bg-neutral-900 border border-neutral-800 rounded-lg px-2 py-1 outline-none focus:border-yellow-400"
+                          />
+                        ) : (
+                          <div className="inline-flex items-center gap-2">
+                            <button onClick={()=>changeQty(p.id, -1)} className="rounded-lg border border-neutral-700 px-2 py-1 hover:border-yellow-400">−</button>
+                            <span>{p.qty ?? 0}</span>
+                            <button onClick={()=>changeQty(p.id, +1)} className="rounded-lg border border-neutral-700 px-2 py-1 hover:border-yellow-400">+</button>
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 text-center">
+                        {editAll ? (
+                          <input
+                            value={v('price', p.price ?? 0)}
+                            onChange={(e)=>setDraftField(p.id, 'price', e.target.value)}
+                            className="w-28 bg-neutral-900 border border-neutral-800 rounded-lg px-2 py-1 outline-none focus:border-yellow-400"
+                          />
+                        ) : (p.price ?? 0)}
+                      </td>
+                      <td className="px-3 py-2 text-center">
+                        {editAll ? (
+                          <input
+                            value={v('engine', p.engine || '')}
+                            onChange={(e)=>setDraftField(p.id, 'engine', e.target.value)}
+                            className="w-24 bg-neutral-900 border border-neutral-800 rounded-lg px-2 py-1 outline-none focus:border-yellow-400"
+                          />
+                        ) : (p.engine || '—')}
+                      </td>
+                      <td className="px-3 py-2 text-center">
+                        {editAll ? (
+                          <input
+                            type="number"
+                            value={v('sort_order', p.sort_order ?? 0)}
+                            onChange={(e)=>setDraftField(p.id, 'sort_order', e.target.value)}
+                            className="w-24 bg-neutral-900 border border-neutral-800 rounded-lg px-2 py-1 outline-none focus:border-yellow-400"
+                          />
+                        ) : (
+                          <div className="inline-flex items-center gap-2">
+                            <button onClick={()=>changeOrder(p.id,-1)} className="rounded-lg border border-neutral-700 px-2 py-1 hover:border-yellow-400">−</button>
+                            <span>{p.sort_order ?? 0}</span>
+                            <button onClick={()=>changeOrder(p.id,1)} className="rounded-lg border border-neutral-700 px-2 py-1 hover:border-yellow-400">+</button>
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 text-center">
+                        {editAll ? (
+                          <input
+                            type="checkbox"
+                            checked={!!v('pinned', p.pinned || false)}
+                            onChange={(e)=>setDraftField(p.id, 'pinned', e.target.checked)}
+                          />
+                        ) : (
+                          <button onClick={()=>togglePinned(p.id)} className="rounded-lg border border-neutral-700 px-2 py-1 hover:border-yellow-400">{p.pinned ? "Так" : "—"}</button>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 text-center">
+                        <div className="flex items-center gap-2 justify-center">
+                          <button onClick={()=>setPhotoEdit(p)} className="rounded-lg border border-neutral-700 px-3 py-1.5 hover:border-yellow-400 text-xs">Фото</button>
+                          <button
+                            onClick={()=>openProductEdit(p)}
+                            className="text-xs rounded-lg border border-neutral-700 px-3 py-1.5 hover:border-yellow-400"
+                            title="Редагувати товар"
+                          >
+                            Редагувати
+                          </button>
+                          <button
+                            onClick={()=>delProduct(p.id)}
+                            className="text-xs rounded-lg border border-red-500/50 text-red-300 px-3 py-1.5 hover:bg-red-500/10"
+                            title="Видалити товар"
+                          >
+                            Видалити
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+                {filteredProducts.length === 0 && (
+                  <tr><td colSpan="12" className="py-10 text-center text-neutral-500">Поки що порожньо</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>)}
+
+        {/* Photo Edit Modal */}
+        {/* Product Edit Modal */}
+        {productEdit && (
+          <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/70 p-4">
+            <div className="w-full max-w-4xl rounded-2xl border border-neutral-800 bg-neutral-950 shadow-2xl overflow-hidden">
+              <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-800">
+                <div className="text-lg font-semibold">Редагування товару — {productEdit.number || '—'}</div>
+                <div className="flex items-center gap-2">
+                  <button onClick={closeProductEdit} className="rounded-lg border border-neutral-700 px-3 py-1.5 hover:bg-neutral-900 text-sm">Закрити</button>
+                  <button onClick={saveProductEdit} className="rounded-lg border border-emerald-500 text-emerald-300 px-3 py-1.5 hover:bg-emerald-600/10 text-sm">Зберегти</button>
+                  <button onClick={()=>delProduct(productEdit.id)} className="rounded-lg border border-red-500/60 text-red-300 px-3 py-1.5 hover:bg-red-500/10 text-sm">Видалити</button>
+                </div>
+              </div>
+              <div className="p-4 grid md:grid-cols-2 gap-4 max-h-[75vh] overflow-auto">
+                <div className="space-y-3">
+                  <Input label="Номер" value={productEdit.number || ''} onChange={(e)=>setProductEdit(s=>({ ...s, number:e.target.value }))}/>
+                  <Input label="OEM" value={productEdit.oem || ''} onChange={(e)=>setProductEdit(s=>({ ...s, oem:e.target.value }))}/>
+                  <Input label="Крос-номери (через кому)" value={productEdit._crossText || ''} onChange={(e)=>setProductEdit(s=>({ ...s, _crossText:e.target.value }))}/>
+                  <Input label="Сумісний для (через кому)" value={productEdit._compatText || ''} onChange={(e)=>setProductEdit(s=>({ ...s, _compatText:e.target.value }))}/>
+                  <div className="grid grid-cols-2 gap-3">
+                    <label className="block">
+                      <div className="text-sm mb-1">Виробник</div>
+                      <select value={productEdit.manufacturer || ''} onChange={(e)=>setProductEdit(s=>({ ...s, manufacturer:e.target.value }))} className="w-full rounded-lg bg-neutral-900 border border-neutral-800 px-3 py-2 text-sm outline-none focus:border-yellow-400">
+                        {MANUFACTURERS.map(m => <option key={m} value={m}>{m}</option>)}
+                      </select>
+                    </label>
+                    <label className="block">
+                      <div className="text-sm mb-1">Тип</div>
+                      <select value={productEdit.type || ''} onChange={(e)=>setProductEdit(s=>({ ...s, type:e.target.value }))} className="w-full rounded-lg bg-neutral-900 border border-neutral-800 px-3 py-2 text-sm outline-none focus:border-yellow-400">
+                        {TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                      </select>
+                    </label>
+                    <label className="block">
+                      <div className="text-sm mb-1">Стан</div>
+                      <select value={productEdit.condition || ''} onChange={(e)=>setProductEdit(s=>({ ...s, condition:e.target.value }))} className="w-full rounded-lg bg-neutral-900 border border-neutral-800 px-3 py-2 text-sm outline-none focus:border-yellow-400">
+                        {CONDITIONS.map(c => <option key={c} value={c}>{c}</option>)}
+                      </select>
+                    </label>
+                    <label className="block">
+                      <div className="text-sm mb-1">Наявність</div>
+                      <select value={productEdit.availability || ''} onChange={(e)=>setProductEdit(s=>({ ...s, availability:e.target.value }))} className="w-full rounded-lg bg-neutral-900 border border-neutral-800 px-3 py-2 text-sm outline-none focus:border-yellow-400">
+                        {AVAILABILITIES.map(a => <option key={a} value={a}>{a}</option>)}
+                      </select>
+                    </label>
+                  </div>
+                  <div className="grid grid-cols-3 gap-3">
+                    <Input label="Кількість (шт)" value={productEdit.qty ?? ''} onChange={(e)=>setProductEdit(s=>({ ...s, qty:e.target.value }))}/>
+                    <Input label="Ціна (₴)" value={productEdit.price ?? ''} onChange={(e)=>setProductEdit(s=>({ ...s, price:e.target.value }))}/>
+                    <Input label="Обʼєм (л)" value={productEdit.engine ?? ''} onChange={(e)=>setProductEdit(s=>({ ...s, engine:e.target.value }))}/>
+                  </div>
+                </div>
+                <div className="space-y-3">
+                  <Textarea label="Фото (URL, по одному в рядку)" value={productEdit._imagesText || ''} onChange={(e)=>setProductEdit(s=>({ ...s, _imagesText:e.target.value }))}/>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {photoEdit && (
+          <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/70 p-4">
+            <div className="w-full max-w-4xl rounded-2xl border border-neutral-800 bg-neutral-950 shadow-2xl overflow-hidden">
+              <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-800">
+                <div className="flex flex-col">
+                  <div className="text-lg font-semibold">Фото · {photoEdit.number || '—'}</div>
+                  <div className="text-xs text-neutral-400">ID: {String(photoEdit.id).slice(-6)} {photoEdit.oem ? ' · OEM: '+photoEdit.oem : ''}</div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    id="photo-upload-input"
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    className="hidden"
+                    onChange={async (e)=>{
+                      const fs = e.currentTarget.files;
+                      if (fs && fs.length) await uploadImages(photoEdit.id, fs);
+                      e.currentTarget.value = "";
+                    }}
+                  />
+                  <label htmlFor="photo-upload-input" className="cursor-pointer rounded-lg border border-neutral-700 px-3 py-1.5 hover:border-yellow-400 text-sm">Додати фото</label>
+                  <button onClick={()=>setPhotoEdit(null)} className="rounded-lg border border-neutral-700 px-3 py-1.5 hover:bg-neutral-900 text-sm">Закрити</button>
+                </div>
+              </div>
+              <div className="p-4 max-h-[70vh] overflow-auto">
+                {Array.isArray(photoEdit.images) && photoEdit.images.length ? (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                    {photoEdit.images.map((url, i)=> (
+                      <div key={i} className="relative group rounded-xl border border-neutral-800 overflow-hidden">
+                        <img src={url} alt="" className="w-full h-36 object-cover" />
+                        <button
+                          onClick={async ()=>{ await deleteOneImage(photoEdit.id, url); }}
+                          className="absolute top-2 right-2 hidden group-hover:inline-flex items-center rounded-md border border-red-500/40 bg-red-500/10 px-2 py-1 text-xs text-red-300 hover:bg-red-500/20"
+                          title="Видалити фото"
                         >
-                          {(() => {
-                            const d = String(orderDetails?.delivery || '');
-                            const isNP = /Нова пошта/i.test(d);
-                            const isPickup = /Самовивіз/i.test(d);
-                            const opts = [];
-                            const push = (v) => { if (!opts.includes(v)) opts.push(v); };
-                            if (isNP) { push('Накладений платіж'); push('Передплата по реквізитам'); }
-                            if (isPickup) { push('Готівковий розрахунок'); push('Передплата по реквізитам'); }
-                            if (!isNP && !isPickup) {
-                              ['Накладений платіж','Готівковий розрахунок','Передплата по реквізитам'].forEach(push);
-                            }
-                            return opts.map(o => <option key={o} value={o}>{o}</option>);
-                          })()}
-                        </select>
-                        <button onClick={saveOrderPayment} className="rounded-lg border border-emerald-300 px-3 py-1.5 hover:bg-emerald-600/10">Зберегти</button>
+                          Видалити
+                        </button>
                       </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-neutral-400 text-sm">Немає фото. Додайте з кнопки «Додати фото».</div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Orders Overlay */}
+        {ordersOpen && (
+          <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/70 p-4">
+            <div className="w-full max-w-5xl max-h-[92vh] rounded-2xl border border-neutral-800 bg-neutral-950 shadow-2xl flex flex-col overflow-hidden">
+              <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-800">
+                <h2 className="text-lg font-semibold">Замовлення</h2>
+                <div className="flex items-center gap-2">
+                  <input value={ordersSearch} onChange={(e)=>setOrdersSearch(e.target.value)} placeholder="Пошук: №, імʼя, телефон, статус" className="rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm outline-none focus:border-yellow-400" />
+                  <button onClick={loadOrders} className="rounded-xl border border-neutral-700 px-3 py-1.5 hover:bg-neutral-900 disabled:opacity-50" disabled={ordersLoading}>Оновити</button>
+                  <button onClick={()=>setOrdersOpen(false)} className="rounded-xl border border-neutral-700 px-3 py-1.5 hover:bg-neutral-900">Закрити</button>
+                </div>
+              </div>
+              {ordersErr && <div className="px-4 py-3 text-rose-400">{ordersErr}</div>}
+              <div className="px-4 py-3 overflow-auto max-h-[70vh]">
+                <table className="w-full text-sm">
+                  <thead className="text-neutral-400">
+                    <tr className="text-left">
+                      <th className="py-2 pr-3">№</th>
+                      <th className="py-2 pr-3">Дата</th>
+                      <th className="py-2 pr-3">Клієнт</th>
+                      <th className="py-2 pr-3">Телефон</th>
+                      <th className="py-2 pr-3">Доставка</th>
+                      <th className="py-2 pr-3">Сума</th>
+                      <th className="py-2 pr-3">Позицій</th>
+                      <th className="py-2 pr-3">Статус</th>
+                      <th className="py-2 pr-0 text-right">Дії</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {orders.length === 0 && (
+                      <tr><td colSpan="9" className="py-10 text-center text-neutral-500">Поки що порожньо</td></tr>
+                    )}
+                    {filteredOrders.map((o) => {
+                      const itemsCount = Array.isArray(o.items) ? o.items.length : (o.items && typeof o.items==='object' ? Object.keys(o.items).length : 0);
+                      return (
+                        <tr key={o.id} className="border-t border-neutral-900 hover:bg-neutral-900/40">
+                          <td className="py-2 pr-3">{seqMap.get(o.id)}</td>
+                          <td className="py-2 pr-3 whitespace-nowrap">{new Date(o.created_at).toLocaleString('uk-UA')}</td>
+                          <td className="py-2 pr-3">{truncateText(o.name || '—', 15)}</td>
+                          <td className="py-2 pr-3">{o.phone || '—'}</td>
+                          <td className="py-2 pr-3 max-w-[18rem]">{truncateText(o.delivery || '—', 10)}</td>
+                          <td className="py-2 pr-3 whitespace-nowrap">{money(o.total)}</td>
+                          <td className="py-2 pr-3">{itemsCount}</td>
+                          <td className="py-2 pr-3"><StatusBadge status={o.status} /></td>
+                          <td className="py-2 pr-0 text-right">
+                            <button onClick={()=>openOrder(o.id, seqMap.get(o.id))} className="rounded-lg border border-neutral-700 px-2 py-1 hover:bg-neutral-900">Детальніше</button>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Details card */}
+            {orderDetails && (
+              <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 p-4">
+                <div className="w-full max-w-3xl max-h-[92vh] rounded-2xl border border-neutral-800 bg-neutral-950 shadow-2xl flex flex-col overflow-hidden">
+                  <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-800">
+                    <h3 className="text-lg font-semibold">Замовлення №{orderDetails.seq}</h3>
+                    <div className="flex items-center gap-2">
+                      <button onClick={()=>setOrderDetails(null)} className="rounded-xl border border-neutral-700 px-3 py-1.5 hover:bg-neutral-900">Закрити</button>
                     </div>
-                    <div className="rounded-xl border border-neutral-800 p-3">
-                      <div className="text-neutral-400 text-xs">Статус</div>
-                      <div className="mt-1 flex items-center gap-2">
-                        <select value={orderStatus} onChange={(e)=>setOrderStatus(e.target.value)} className="bg-neutral-900 border border-neutral-700 rounded-lg px-2 py-1 text-sm outline-none">
-                          {STATUS_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
-                        </select>
-                        <button onClick={saveOrderStatus} className="rounded-lg border border-emerald-600 text-emerald-300 px-3 py-1.5 hover:bg-emerald-600/10">Зберегти</button>
-                        
-                      </div>
-                      <div className="mt-3">
-                        <Textarea label="Коментар адміністратора"
-                          value={orderComment}
-                          onChange={(e)=>setOrderComment(e.target.value)}
-                        />
-                      </div>
-                    </div>
-                    <div className="rounded-xl border border-neutral-800 p-3"><div className="text-neutral-400 text-xs">Сума</div><div className="text-sm">{money(orderDetails.total)}</div></div>
-                    <div className="rounded-xl border border-neutral-800 p-3"><div className="text-neutral-400 text-xs">Створено</div><div className="text-sm">{new Date(orderDetails.created_at).toLocaleString('uk-UA')}</div></div>
                   </div>
 
-                  <div className="rounded-xl border border-neutral-800">
-                    <div className="px-3 py-2 border-b border-neutral-800 text-neutral-400 text-sm">Позиції</div>
-                    <div className="p-3 overflow-x-auto">
-                      <table className="w-full text-sm">
-                        <thead className="text-neutral-400">
-                          <tr className="text-left">
-                            <th className="py-2 pr-3">#</th>
-                            <th className="py-2 pr-3">Номер / OEM</th>
-                            <th className="py-2 pr-3">Наявність</th>
-                            <th className="py-2 pr-3">К-сть</th>
-                            <th className="py-2 pr-3">Ціна</th>
-                            <th className="py-2 pr-3">Сума</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {Array.isArray(orderDetails.items) && orderDetails.items.length ? orderDetails.items.map((it, idx) => {
-                            const qty = Number(it.qty || it.quantity || 1);
-                            const price = Number(it.price || it.unitPrice || 0);
-                            const sum = price*qty;
-                            const number = it.number || it.code || it.sku || '';
-                            const oem = it.oem || it.OEM || '';
-                            const name = it.title || it.name || it.manufacturer || '';
-                            return (
-                              <tr key={idx} className="border-t border-neutral-900">
-                                <td className="py-2 pr-3">{idx+1}</td>
-                                <td className="py-2 pr-3 whitespace-nowrap">{number}{oem?` / ${oem}`:''}</td>
-                                <td className="py-2 pr-3">{(it.availability || it.avail || it.stockStatus || '—')}</td>
-                                <td className="py-2 pr-3">{qty}</td>
-                                <td className="py-2 pr-3 whitespace-nowrap">{money(price)}</td>
-                                <td className="py-2 pr-3 whitespace-nowrap">{money(sum)}</td>
-                              </tr>
-                            );
-                          }) : (<tr><td className="py-4 text-neutral-500" colSpan="6">Немає позицій</td></tr>)}
-                        </tbody>
-                      </table>
+                  <div className="p-4 grid gap-4 overflow-y-auto max-h-[70vh] pr-2">
+                    <div className="grid md:grid-cols-2 gap-4">
+                      <div className="rounded-xl border border-neutral-800 p-3"><div className="text-neutral-400 text-xs">Клієнт</div><div className="text-sm">{orderDetails.name || '—'}</div></div>
+                      <div className="rounded-xl border border-neutral-800 p-3"><div className="text-neutral-400 text-xs">Телефон</div><div className="text-sm">{orderDetails.phone || '—'}</div></div>
+                      <div className="rounded-xl border border-neutral-800 p-3 md:col-span-2"><div className="text-neutral-400 text-xs">Доставка</div><div className="text-sm">{orderDetails.delivery || '—'}</div></div>
+                      {/* Спосіб оплати */}
+                      <div className="rounded-xl border border-neutral-800 p-3">
+                        <div className="text-neutral-400 text-xs">Спосіб оплати</div>
+                        <div className="mt-1 flex items-center gap-2">
+                          <select
+                            value={orderPayment}
+                            onChange={(e)=>setOrderPayment(e.target.value)}
+                            className="bg-neutral-900 border border-neutral-700 rounded-lg px-2 py-1 text-sm outline-none"
+                          >
+                            {(() => {
+                              const d = String(orderDetails?.delivery || '');
+                              const isNP = /Нова пошта/i.test(d);
+                              const isPickup = /Самовивіз/i.test(d);
+                              const opts = [];
+                              const push = (v) => { if (!opts.includes(v)) opts.push(v); };
+                              if (isNP) { push('Накладений платіж'); push('Передплата по реквізитам'); }
+                              if (isPickup) { push('Готівковий розрахунок'); push('Передплата по реквізитам'); }
+                              if (!isNP && !isPickup) {
+                                ['Накладений платіж','Готівковий розрахунок','Передплата по реквізитам'].forEach(push);
+                              }
+                              return opts.map(o => <option key={o} value={o}>{o}</option>);
+                            })()}
+                          </select>
+                          <button onClick={saveOrderPayment} className="rounded-lg border border-emerald-300 px-3 py-1.5 hover:bg-emerald-600/10">Зберегти</button>
+                        </div>
+                      </div>
+                      <div className="rounded-xl border border-neutral-800 p-3">
+                        <div className="text-neutral-400 text-xs">Статус</div>
+                        <div className="mt-1 flex items-center gap-2">
+                          <select value={orderStatus} onChange={(e)=>setOrderStatus(e.target.value)} className="bg-neutral-900 border border-neutral-700 rounded-lg px-2 py-1 text-sm outline-none">
+                            {STATUS_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+                          </select>
+                          <button onClick={saveOrderStatus} className="rounded-lg border border-emerald-600 text-emerald-300 px-3 py-1.5 hover:bg-emerald-600/10">Зберегти</button>
+                        </div>
+                        <div className="mt-3">
+                          <Textarea label="Коментар адміністратора"
+                            value={orderComment}
+                            onChange={(e)=>setOrderComment(e.target.value)}
+                          />
+                        </div>
+                      </div>
+                      <div className="rounded-xl border border-neutral-800 p-3"><div className="text-neutral-400 text-xs">Сума</div><div className="text-sm">{money(orderDetails.total)}</div></div>
+                      <div className="rounded-xl border border-neutral-800 p-3"><div className="text-neutral-400 text-xs">Створено</div><div className="text-sm">{new Date(orderDetails.created_at).toLocaleString('uk-UA')}</div></div>
+                    </div>
+
+                    <div className="rounded-xl border border-neutral-800">
+                      <div className="px-3 py-2 border-b border-neutral-800 text-neutral-400 text-sm">Позиції</div>
+                      <div className="p-3 overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead className="text-neutral-400">
+                            <tr className="text-left">
+                              <th className="py-2 pr-3">#</th>
+                              <th className="py-2 pr-3">Номер / OEM</th>
+                              <th className="py-2 pr-3">Наявність</th>
+                              <th className="py-2 pr-3">К-сть</th>
+                              <th className="py-2 pr-3">Ціна</th>
+                              <th className="py-2 pr-3">Сума</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {Array.isArray(orderDetails.items) && orderDetails.items.length ? orderDetails.items.map((it, idx) => {
+                              const qty = Number(it.qty || it.quantity || 1);
+                              const price = Number(it.price || it.unitPrice || 0);
+                              const sum = price*qty;
+                              const number = it.number || it.code || it.sku || '';
+                              const oem = it.oem || it.OEM || '';
+                              return (
+                                <tr key={idx} className="border-t border-neutral-900">
+                                  <td className="py-2 pr-3">{idx+1}</td>
+                                  <td className="py-2 pr-3 whitespace-nowrap">{number}{oem?` / ${oem}`:''}</td>
+                                  <td className="py-2 pr-3">{(it.availability || it.avail || it.stockStatus || '—')}</td>
+                                  <td className="py-2 pr-3">{qty}</td>
+                                  <td className="py-2 pr-3 whitespace-nowrap">{money(price)}</td>
+                                  <td className="py-2 pr-3 whitespace-nowrap">{money(sum)}</td>
+                                </tr>
+                              );
+                            }) : (<tr><td className="py-4 text-neutral-500" colSpan="6">Немає позицій</td></tr>)}
+                          </tbody>
+                        </table>
+                      </div>
                     </div>
                   </div>
                 </div>
               </div>
-            </div>
-          )}
-        </div>
-      )}
+            )}
+          </div>
+        )}
       </main>
     </div>
   );

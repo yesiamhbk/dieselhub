@@ -5,6 +5,21 @@ import multer from "multer";
 import { createClient } from "@supabase/supabase-js";
 
 const app = express();
+app.set('trust proxy', true);
+
+// --- Admin IP allowlist (UI+API) ---
+const ADMIN_IPS = (process.env.ADMIN_IPS || "78.154.188.94").split(',').map(s=>s.trim()).filter(Boolean);
+function getClientIP(req) {
+  const xf = (req.headers['x-forwarded-for'] || '').split(',')[0].trim();
+  const ip = xf || req.ip || req.connection?.remoteAddress || '';
+  return ip.replace('::ffff:', '');
+}
+function isIpAllowed(ip) {
+  if (!ADMIN_IPS.length) return true;
+  if (ip === '127.0.0.1' || ip === '::1') return true; // local dev
+  return ADMIN_IPS.includes(ip);
+}
+
 app.disable('x-powered-by');
 
 // CORS whitelist (prod-safe). Override via CORS_ORIGINS env, comma-separated.
@@ -72,6 +87,9 @@ const supaAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
 // ====== простая админ-авторизация ======
 function requireAdmin(req, res, next) {
+  const ip = getClientIP(req);
+  if (!isIpAllowed(ip)) return res.status(403).json({ error:'forbidden_ip', ip });
+
   const token = req.header("x-admin-token");
   if (!token || token !== ADMIN_TOKEN) return res.status(401).json({ error: "unauthorized" });
   next();
@@ -106,7 +124,7 @@ app.get("/api/products", async (_req, res) => {
   try {
     const { data, error } = await supaAdmin
       .from("products")
-      .select("id,number,oem,cross,compat_for,manufacturer,condition,type,availability,qty,price,engine,images")
+      .select("id,number,oem,cross,compat_for,manufacturer,condition,type,availability,qty,price,engine,images,sort_order,pinned")
       .order("id", { ascending: true });
     if (error) throw error;
     res.json(data || []);
@@ -120,7 +138,7 @@ app.get("/api/products", async (_req, res) => {
 app.post("/api/admin/product", requireAdmin, async (req, res) => {
   try {
     const src = req.body || {};
-    const allowed = ["price","qty","availability","number","oem","cross","compat_for","manufacturer","condition","type","engine","images"];
+    const allowed = ["price","qty","availability","number","oem","cross","compat_for","manufacturer","condition","type","engine","images","sort_order","pinned"];
     const payload = Object.fromEntries(Object.entries(src).filter(([k]) => allowed.includes(k)));
     const { data, error } = await supaAdmin
       .from("products")
@@ -140,7 +158,7 @@ app.patch("/api/admin/product/:id", requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const src = req.body || {};
-    const allowed = ["price","qty","availability","number","oem","cross","compat_for","manufacturer","condition","type","engine","images"];
+    const allowed = ["price","qty","availability","number","oem","cross","compat_for","manufacturer","condition","type","engine","images","sort_order","pinned"];
     const patch = {};
     for (const k of allowed) if (k in src && src[k] !== undefined) patch[k] = src[k];
     if (Object.keys(patch).length === 0) return res.json({ ok: true });
@@ -545,7 +563,7 @@ function csvStringify(rows){
   const header=Object.keys(rows[0]); const esc=v=>{const s=(v==null?"":String(v)); return (s.includes(",")||s.includes(";")||s.includes("\n")||s.includes('"'))?'"'+s.replace(/"/g,'""')+'"':s;};
   const out=[header.join(",")]; for(const r of rows) out.push(header.map(k=>esc(r[k])).join(",")); return out.join("\n");
 }
-async function fetchAllProducts(){ const {data,error}=await supaAdmin.from("products").select("id,number,oem,cross,compat_for,manufacturer,condition,type,availability,qty,price,engine,images").order("id",{ascending:true}); if(error) throw error; return data||[]; }
+async function fetchAllProducts(){ const {data,error}=await supaAdmin.from("products").select("id,number,oem,cross,compat_for,manufacturer,condition,type,availability,qty,price,engine,images,sort_order,pinned").order("id",{ascending:true}); if(error) throw error; return data||[]; }
 function shapeForExport(p){ return { id:p.id??"", number:p.number??"", oem:p.oem??"", cross:Array.isArray(p.cross)?p.cross.join("|"):"", manufacturer:p.manufacturer??"", condition:p.condition??"", type:p.type??"", engine:p.engine??"", availability:p.availability??"", qty:p.qty??0, price:p.price??0, images:Array.isArray(p.images)?p.images.join("|"):"" }; }
 const ALLOWED_CONDITIONS=new Set(["Нове","Відновлене"]); const ALLOWED_TYPES=new Set(["Форсунка","ТНВД","Клапан"]); const ALLOWED_AVAIL=new Set(["В наявності","Під замовлення"]);
 function shapeIncoming(o){ const out={ id:o.id??null, number:(o.number??"").trim(), oem:(o.oem??"").trim(), cross:Array.isArray(o.cross)?o.cross:String(o.cross||"").split("|").map(s=>s.trim()).filter(Boolean), manufacturer:(o.manufacturer??"").trim(), condition:(o.condition??"").trim(), type:(o.type??"").trim(), engine:(o.engine===""||o.engine==null)?null:Number(o.engine), availability:(o.availability??"").trim(), qty:(o.qty===""||o.qty==null)?0:parseInt(o.qty,10), price:(o.price===""||o.price==null)?0:Number(o.price), images:Array.isArray(o.images)?o.images:String(o.images||"").split("|").map(s=>s.trim()).filter(Boolean)}; if(!Number.isFinite(out.engine)) out.engine=null; if(!Number.isFinite(out.price)) out.price=0; if(!Number.isInteger(out.qty)||out.qty<0) out.qty=0; return out; }
@@ -676,3 +694,9 @@ app.post("/api/inventory/sync", async (req, res) => {
 });
 /* === ВАЖНО ДЛЯ RENDER === */
 app.listen(process.env.PORT || 10000, "0.0.0.0", () => { console.log("API server listening on port", process.env.PORT || 10000); });
+
+// IP check for admin UI
+app.get("/api/admin/allow-ip", (req, res) => {
+  const ip = getClientIP(req);
+  res.json({ allowed: isIpAllowed(ip), ip, allowlist: ADMIN_IPS });
+});

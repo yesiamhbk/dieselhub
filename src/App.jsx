@@ -19,6 +19,19 @@ function getProductStockById(products, id) {
 
 // Список типів — обовʼязково є "Клапан"
 const TYPES = ["Форсунка", "ПНВТ", "Клапан", "Ремкомплект", "Коннектор", "Гайка", "Пружина розпилювача"];
+
+// === Групи типів для фільтра «Тип» (рівно 3 кнопки) ===
+const TYPE_GROUPS = [
+  { id: 'inj',   label: 'Форсунки' },
+  { id: 'pnbt',  label: 'ПНВТ' },
+  { id: 'parts', label: 'Комплектуючі' },
+];
+function getTypeGroup(type) {
+  if (type === 'Форсунка') return 'inj';
+  if (type === 'ПНВТ') return 'pnbt';
+  return 'parts';
+}
+
 const CONDITIONS = ["Нове", "Відновлене"];
 const AVAILABILITIES = ["В наявності", "Під замовлення"];
 
@@ -184,7 +197,7 @@ export default function App() {
     return products.filter((p) => {
       if (filters.brand.size && !filters.brand.has(p.manufacturer)) return false;
       if (filters.condition.size && !filters.condition.has(p.condition)) return false;
-      if (filters.type.size && !filters.type.has(p.type)) return false;
+      if (filters.type.size && !filters.type.has(getTypeGroup(p.type))) return false;
       if (filters.availability.size && !filters.availability.has(effectiveAvailability(p))) return false;
       if (filters.engine.size && !filters.engine.has(p.engine)) return false;
 
@@ -220,7 +233,21 @@ export default function App() {
     });
   }, [query, filters, products]);
 
-  /* ----------- Пагінація / Показати ще ----------- */
+  
+  // Сортування каталогу (закріплені вгорі, потім за порядком, далі за id)
+  const filteredSorted = useMemo(() => {
+    const arr = Array.isArray(filtered) ? [...filtered] : [];
+    return arr.sort((a, b) => {
+      const ap = a && (a.pinned ? 1 : 0);
+      const bp = b && (b.pinned ? 1 : 0);
+      if (bp !== ap) return bp - ap;
+      const ao = Number(a && a.sort_order != null ? a.sort_order : 0) || 0;
+      const bo = Number(b && b.sort_order != null ? b.sort_order : 0) || 0;
+      if (bo !== ao) return bo - ao;
+      return Number(b && b.id || 0) - Number(a && a.id || 0);
+    });
+  }, [filtered]);
+/* ----------- Пагінація / Показати ще ----------- */
   const PAGE_SIZE = 9;
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const [page, setPage] = useState(1);
@@ -231,12 +258,12 @@ export default function App() {
     setMode("page");
   }, [query, filters, products]);
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const totalPages = Math.max(1, Math.ceil(filteredSorted.length / PAGE_SIZE));
   const currentPage = mode === "page" ? Math.min(page, totalPages) : 1;
   const shown =
     mode === "more"
-      ? filtered.slice(0, visibleCount)
-      : filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+      ? filteredSorted.slice(0, visibleCount)
+      : filteredSorted.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
   const maxButtons = 6;
   const pagesToShow =
     totalPages <= maxButtons
@@ -447,6 +474,7 @@ export default function App() {
     phone: "",
     delivery: "Нова пошта",
     agree: false,
+    agreeLegal: false,
   });
 
   // ============ Нова пошта: стани для підказок ============
@@ -548,7 +576,7 @@ export default function App() {
 
   const nameValid = /^[A-Za-zА-Яа-яЁёІіЇїЄєҐґ'’ -]{1,30}$/.test(order.name || "");
   const phoneValid = (order.phone || "").length === 9;
-  const agreeValid = !!order.agree;
+  const agreeValid = !!order.agree && !!order.agreeLegal;
 
   async function placeOrder() {
     if (!nameValid || !phoneValid || !agreeValid) return;
@@ -761,23 +789,23 @@ export default function App() {
           <div className="rounded-2xl border border-neutral-800 p-4">
             <div className="font-semibold mb-2">Тип</div>
             <div className="flex flex-wrap gap-2">
-              {TYPES.map((t) => (
+              {TYPE_GROUPS.map((g) => (
                 <button
-                  key={t}
+                  key={g.id}
                   onClick={() =>
                     setFilters((f) => ({
                       ...f,
-                      type: toggleSet(f.type, t),
+                      type: toggleSet(f.type, g.id),
                     }))
                   }
                   className={classNames(
                     "px-3 py-1 rounded-full border text-sm",
-                    filters.type.has(t)
+                    filters.type.has(g.id)
                       ? "border-yellow-400 text-yellow-400"
                       : "border-neutral-800 text-neutral-300 hover:border-neutral-600"
                   )}
                 >
-                  {t}
+                  {g.label}
                 </button>
               ))}
             </div>
@@ -918,15 +946,19 @@ export default function App() {
                   <div className="text-sm text-neutral-300">
                     OEM Номер: <span className="text-neutral-100 text-left">{p.oem || "—"}</span>
                   </div>
-                  <div className="text-sm text-neutral-300">
+                  {(p.type === "Форсунка" || p.type === "ПНВТ") && (
+<div className="text-sm text-neutral-300">
                     Кросс: <ExpandableList items={p.cross || []} max={2} />
                   </div>
+)}
                   <div className="text-sm text-neutral-300">
                     Тип деталі: <span className="text-neutral-100 text-left">{p.type}</span>
                   </div>
-                  <div className="text-sm text-neutral-300">
+                  {((p.type === "Форсунка" || p.type === "ПНВТ") && Number(p.engine) > 0) && (
+<div className="text-sm text-neutral-300">
                     Об'єм: <span className="text-neutral-100 text-left">{formatEngine(p.engine)}</span>
                   </div>
+)}
                   <div className="text-xs text-neutral-400">
                     {p.manufacturer} · {p.condition}
                   </div>
@@ -1123,22 +1155,28 @@ export default function App() {
                       <span className="text-neutral-400 text-left">OEM Номер:</span>
                       <span className="text-neutral-100 text-left">{productOpen.oem || "—"}</span>
                     </div>
-                    <div className="flex flex-wrap items-baseline gap-2 px-3 py-2">
+                    {(productOpen.type === "Форсунка" || productOpen.type === "ПНВТ") && (
+<div className="flex flex-wrap items-baseline gap-2 px-3 py-2">
                       <span className="text-neutral-400 text-left">Кросс номери:</span>
                       <span className="text-neutral-100 text-left"><ExpandableList items={productOpen.cross || []} max={2} /></span>
                     </div>
+)}
                     <div className="flex flex-wrap items-baseline gap-2 px-3 py-2">
                       <span className="text-neutral-400 text-left">Тип деталі:</span>
                       <span className="text-neutral-100 text-left">{productOpen.type}</span>
                     </div>
-                    <div className="flex flex-wrap items-baseline gap-2 px-3 py-2">
+                    {((productOpen.type === "Форсунка" || productOpen.type === "ПНВТ") && Number(productOpen.engine) > 0) && (
+<div className="flex flex-wrap items-baseline gap-2 px-3 py-2">
                       <span className="text-neutral-400 text-left">Обʼєм двигуна</span>
                       <span className="text-neutral-100 text-left">{formatEngine(productOpen.engine)}</span>
                     </div>
-                    <div className="flex flex-wrap items-baseline gap-2 px-3 py-2">
+)}
+                    {(productOpen.type === "Форсунка" || productOpen.type === "ПНВТ") && (
+<div className="flex flex-wrap items-baseline gap-2 px-3 py-2">
                       <span className="text-neutral-400 text-left">Гарантія</span>
                       <span className="text-neutral-100 text-left">{getWarranty()} <a href="/#/warranty" onClick={(e)=>e.stopPropagation()} className="ml-1 underline decoration-dotted hover:text-yellow-400">детальніше</a></span>
                     </div>
+)}
                   </div>
                 </div>
                 
@@ -1149,7 +1187,8 @@ export default function App() {
                         Немає комплектуючих для цього товару.
                       </div>
                     ) : (
-                      <ul className="divide-y divide-neutral-800">
+                      <div className="max-h-64 overflow-y-auto pr-1">
+  <ul className="divide-y divide-neutral-800">
   {compatProducts.map((cp) => (
     <li key={cp.id} className="grid grid-cols-[1fr_auto_auto_auto] items-center gap-3 px-3 py-2">
       {/* Левый блок: номер полностью + маленький тип снизу */}
@@ -1189,6 +1228,7 @@ export default function App() {
     </li>
   ))}
 </ul>
+</div>
                     )}
                   </div>
                 )}
@@ -1251,95 +1291,101 @@ export default function App() {
       {cartOpen && (
         <div className="fixed inset-0 z-[70]">
           <div className="absolute inset-0 bg-black/60" onClick={() => setCartOpen(false)} />
-          <div className="absolute right-0 top-0 h-full w-full max-w-md bg-neutral-950 border-l border-neutral-800 p-4 overflow-y-auto">
-            <div className="flex items-center justify-between mb-4">
+          <div className="absolute right-0 top-0 h-full w-full max-w-md bg-neutral-950 border-l border-neutral-800 flex flex-col">
+            {/* Header */}
+            <div className="p-4 border-b border-neutral-800 flex items-center justify-between">
               <h2 className="text-xl font-bold">Кошик</h2>
               <button onClick={() => setCartOpen(false)} className="text-white hover:text-neutral-300">
                 Закрити
               </button>
             </div>
 
-            {cartItems.length === 0 ? (
-              <div className="text-neutral-400 text-left">Кошик порожній</div>
-            ) : (
-              <div className="space-y-4">
-                {cartItems.map((item) => (
-                  <div key={item.id} className="rounded-xl border border-neutral-800 p-3">
-                    <div className="flex items-start gap-3">
-                      <div className="w-24">
-                        <div className="h-16 w-24 rounded-lg bg-neutral-800 grid place-items-center text-neutral-400 text-xs overflow-hidden">
-                          {hasImages(item.images) ? (
-                            <img src={item.images[0]} alt="" className="w-full h-full object-cover" />
-                          ) : (
-                            "Фото"
-                          )}
+            {/* Scrollable items */}
+            <div className="flex-1 overflow-y-auto p-4">
+              {cartItems.length === 0 ? (
+                <div className="text-neutral-400 text-left">Кошик порожній</div>
+              ) : (
+                <div className="space-y-4">
+                  {cartItems.map((item) => (
+                    <div key={item.id} className="rounded-xl border border-neutral-800 p-3">
+                      <div className="flex items-start gap-3">
+                        <div className="w-24">
+                          <div className="h-16 w-24 rounded-lg bg-neutral-800 grid place-items-center text-neutral-400 text-xs overflow-hidden">
+                            {hasImages(item.images) ? (
+                              <img src={item.images[0]} alt="" className="w-full h-full object-cover" />
+                            ) : (
+                              "Фото"
+                            )}
+                          </div>
+                          <div className="mt-1 w-24">
+                            {((getProductStockById(products, item.id) || 0) > 0) ? (
+                              <span className="block w-full text-center text-[11px] py-[3px] rounded-full border border-green-400 text-green-400">В наявності</span>
+                            ) : (
+                              <span className="block w-full text-center text-[11px] py-[3px] rounded-full border border-yellow-400 text-yellow-400">1–3 дні</span>
+                            )}
+                          </div>
                         </div>
-                        <div className="mt-1 w-24">
-                          {((getProductStockById(products, item.id) || 0) > 0) ? (
-                            <span className="block w-full text-center text-[11px] py-[3px] rounded-full border border-green-400 text-green-400">В наявності</span>
-                          ) : (
-                            <span className="block w-full text-center text-[11px] py-[3px] rounded-full border border-yellow-400 text-yellow-400">1–3 дні</span>
-                          )}
+                        <div className="flex-1">
+                          <div className="font-semibold">{item.number}</div>
+                          <div className="text-sm text-neutral-400">{item.type || "—"}</div>
+                          <div className="flex items-center gap-2 mt-2">
+                            <input
+                              type="number"
+                              min={0}
+                              max={getProductStockById(products, item.id) || undefined}
+                              value={String(item.qty)}
+                              onChange={(e) => {
+                                const stock = getProductStockById(products, item.id);
+                                let n = parseInt(e.target.value || "0", 10);
+                                if (!Number.isFinite(n)) n = 0;
+                                if (stock && n > stock) n = stock;
+                                updateQty(item.id, String(n));
+                                if (String(n) !== e.target.value) e.target.value = String(n);
+                              }}
+                              className="w-24 bg-neutral-900 border border-neutral-800 rounded-lg px-2 py-1 text-sm"
+                            />
+                            <button onClick={() => removeFromCart(item.id)} className="text-sm text-red-400 hover:text-red-300">
+                              Видалити
+                            </button>
+                          </div>
                         </div>
-                      </div>
-                      <div className="flex-1">
-                        <div className="font-semibold">{item.number}</div>
-                        <div className="text-sm text-neutral-400">OEM: {item.oem || "—"}</div>
-                        <div className="flex items-center gap-2 mt-2">
-                          <input
-                            type="number"
-                            min={0}
-                            max={getProductStockById(products, item.id) || undefined}
-                            value={String(item.qty)}
-                            onChange={(e) => {
-                              const stock = getProductStockById(products, item.id);
-                              let n = parseInt(e.target.value || "0", 10);
-                              if (!Number.isFinite(n)) n = 0;
-                              if (stock && n > stock) n = stock;
-                              updateQty(item.id, String(n));
-                              if (String(n) !== e.target.value) e.target.value = String(n);
-                            }}
-                            className="w-24 bg-neutral-900 border border-neutral-800 rounded-lg px-2 py-1 text-sm"
-                          />
-                          <button onClick={() => removeFromCart(item.id)} className="text-sm text-red-400 hover:text-red-300">
-                            Видалити
-                          </button>
+                        <div className="font-semibold text-yellow-400">
+                          {((item.price || 0) * Math.max(0, item.qty)).toLocaleString("uk-UA")} ₴
                         </div>
-                      </div>
-                      <div className="font-semibold text-yellow-400">
-                        {((item.price || 0) * Math.max(0, item.qty)).toLocaleString("uk-UA")} ₴
                       </div>
                     </div>
-                  </div>
-                ))}
-
-                <div className="flex items-center justify-between border-t border-neutral-800 pt-3">
-                  <div className="text-neutral-400 text-left">Разом</div>
-                  <div className="text-lg font-bold text-yellow-400">{cartTotal.toLocaleString("uk-UA")} ₴</div>
+                  ))}
                 </div>
+              )}
+            </div>
 
-                <div className="flex items-center justify-between gap-2">
-                  <button
-                    onClick={openCheckout}
-                    disabled={cartItems.length === 0 || cartItems.some((i) => i.qty <= 0)}
-                    className={classNames(
-                      "flex-1 rounded-xl font-semibold py-3",
-                      cartItems.length === 0 || cartItems.some((i) => i.qty <= 0)
-                        ? "bg-neutral-800 text-neutral-500 cursor-not-allowed"
-                        : "bg-yellow-400 text-neutral-950 hover:brightness-90"
-                    )}
-                  >
-                    Оформити замовлення
-                  </button>
-                  <button
-                    onClick={() => setCartOpen(false)}
-                    className="rounded-xl border border-neutral-700 px-4 py-3 font-semibold hover:border-yellow-400"
-                  >
-                    Продовжити покупки
-                  </button>
-                </div>
+            {/* Sticky bottom panel */}
+            <div className="p-4 border-t border-neutral-800 bg-neutral-950">
+              <div className="flex items-center justify-between">
+                <div className="text-neutral-400 text-left">Разом</div>
+                <div className="text-lg font-bold text-yellow-400">{cartTotal.toLocaleString("uk-UA")} ₴</div>
               </div>
-            )}
+              <div className="mt-3 flex items-center justify-between gap-2">
+                <button
+                  onClick={openCheckout}
+                  disabled={cartItems.length === 0 || cartItems.some((i) => i.qty <= 0)}
+                  className={classNames(
+                    "flex-1 rounded-xl font-semibold py-3",
+                    cartItems.length === 0 || cartItems.some((i) => i.qty <= 0)
+                      ? "bg-neutral-800 text-neutral-500 cursor-not-allowed"
+                      : "bg-yellow-400 text-neutral-950 hover:brightness-90"
+                  )}
+                >
+                  Оформити замовлення
+                </button>
+                <button
+                  onClick={() => setCartOpen(false)}
+                  className="rounded-xl border border-neutral-700 px-4 py-3 font-semibold hover:border-yellow-400"
+                >
+                  Продовжити покупки
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -1573,16 +1619,35 @@ export default function App() {
               </label>
             )}
 
+            
             {/* Checkboxes */}
             <label className="flex items-center gap-2 mt-2">
-              <input type="checkbox" checked={!!order.agree} onChange={(e)=>setOrder(o=>({...o, agree:e.target.checked}))} />
-              <span className="text-sm text-white">Підтверджую, що ознайомився з <a href="/#/warranty" className="text-yellow-400 underline hover:text-yellow-300">гарантією</a> та умовами повернення</span>
+              <input
+                type="checkbox"
+                checked={!!order.agree}
+                onChange={(e) => setOrder(o => ({ ...o, agree: e.target.checked }))}
+              />
+              <span className="text-sm text-white">
+                Підтверджую, що ознайомився з{" "}
+                <a className="text-yellow-400 no-underline hover:no-underline" href="#/warranty">Гарантією</a>
+                {" "}та умовами повернення
+              </span>
             </label>
 
             <label className="flex items-center gap-2">
-              <input type="checkbox" checked={!!order.agreePD} onChange={(e)=>setOrder(o=>({...o, agreePD:e.target.checked}))} />
-              <span className="text-sm text-white">Надаю згоду на обробку моїх персональних даних</span>
+              <input
+                type="checkbox"
+                checked={!!order.agreeLegal}
+                onChange={(e) => setOrder(o => ({ ...o, agreeLegal: e.target.checked }))}
+              />
+              <span className="text-sm text-white">
+                Погоджуюся з умовами{" "}
+                <a className="text-yellow-400 no-underline hover:no-underline" href="#/offer">Публічної оферти</a>
+                {" "}та надаю згоду на обробку моїх персональних даних відповідно до{" "}
+                <a className="text-yellow-400 no-underline hover:no-underline" href="#/privacy">Політики конфіденційності</a>.
+              </span>
             </label>
+
           </div>
 
           {/* Right: Summary + Submit full width */}
@@ -1627,7 +1692,7 @@ export default function App() {
                 const nameValid = /^[A-Za-zА-Яа-яЁёІіЇїЄєҐґ'’ -]{1,50}$/.test(order.name || "");
                 const phoneValid = /^[0-9]{9}$/.test(order.phone || "");
                 const paymentValue = order.payment || (order.delivery === "Нова пошта" ? "Передплата по реквізитам" : "Готівковий розрахунок");
-                const agreeValid = !!order.agree && !!order.agreePD;
+                const agreeValid = !!order.agree && !!order.agreeLegal;
                 const cityOk = order.delivery === "Нова пошта" ? !!(npCityInput && npWhInput) : true;
                 const okToSubmit = nameValid && phoneValid && agreeValid && !!paymentValue && cityOk && cartItems.length>0 && !cartItems.some(i=>i.qty<=0);
                 return (
@@ -1713,10 +1778,16 @@ export default function App() {
 
       {/* Footer */}
       <footer className="mt-16 border-t border-neutral-800">
-        <div className="mx-auto max-w-7xl px-4 py-8 text-sm text-neutral-400 flex items-center justify-between">
-          <div>© {new Date().getFullYear()} Diesel Hub</div>
-          <div>Ремонт і продаж дизельних форсунок і ПНВТ</div>
-        </div>
+<div className="mx-auto max-w-7xl px-4 py-8 text-sm text-neutral-400 flex items-center justify-between">
+  <div>© {new Date().getFullYear()} Diesel Hub</div>
+  <div className="flex items-center gap-4">
+    <a className="hover:text-white" href="#/offer">Оферта</a>
+    <a className="hover:text-white" href="#/warranty">Повернення та гарантія</a>
+    <a className="hover:text-white" href="#/privacy">Конфіденційність</a>
+    <a className="hover:text-white" href="#/payment">Оплата і доставка</a>
+  </div>
+</div>
+
       </footer>
     </div>
   );
