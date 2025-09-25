@@ -264,11 +264,36 @@ export default function App() {
     mode === "more"
       ? filteredSorted.slice(0, visibleCount)
       : filteredSorted.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
-  const maxButtons = 6;
-  const pagesToShow =
-    totalPages <= maxButtons
-      ? Array.from({ length: totalPages }, (_, i) => i + 1)
-      : [1, 2, 3, 4, "…", totalPages - 1, totalPages];
+  
+  const maxButtons = 7; // общее число видимых "кнопок" вместе с многоточиями и краями
+  const pagesToShow = (() => {
+    if (totalPages <= maxButtons) {
+      return Array.from({ length: totalPages }, (_, i) => i + 1);
+    }
+    const s = new Set([1, totalPages, currentPage - 1, currentPage, currentPage + 1]);
+
+    // Если мы в начале — показываем больше ранних страниц
+    if (currentPage <= 4) {
+      [2,3,4,5].forEach(n => s.add(n));
+    }
+    // Если мы в конце — показываем больше поздних страниц
+    if (currentPage >= totalPages - 3) {
+      [totalPages-4, totalPages-3, totalPages-2, totalPages-1].forEach(n => s.add(n));
+    }
+
+    // Обрезаем к допустимому диапазону
+    const arr = Array.from(s).filter(n => n >= 1 && n <= totalPages).sort((a,b)=>a-b);
+
+    // Вставляем многоточия при разрывах
+    const result = [];
+    for (let i = 0; i < arr.length; i++) {
+      result.push(arr[i]);
+      if (i < arr.length - 1 && arr[i+1] - arr[i] > 1) {
+        result.push('…');
+      }
+    }
+    return result;
+  })();
 
   /* ----------- Кошик ----------- */
   const [cart, setCart] = useState([]); // [{id, qty}]
@@ -719,7 +744,7 @@ export default function App() {
             <div className="rounded-2xl border border-neutral-800 bg-gradient-to-br from-neutral-900 to-neutral-950 p-4">
               <ul className="text-base text-white leading-tight space-y-1 list-disc pl-5">
   <li>
-    <a href="tel:+380995507055" className="text-[#ffd200] hover:underline">099 550 70 55</a> <span className="text-white">консультація</span>
+    <a href="tel:+380665507055" className="text-[#ffd200] hover:underline">066 550 70 55</a> <span className="text-white">Консультація</span>
   </li>
   <li>
     <a href="#/warranty" className="text-white hover:underline">Ознайомитися з умовами гарантії</a>
@@ -982,9 +1007,10 @@ export default function App() {
           </div>
 
           {/* Пагінація + Показати ще */}
-          <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="mt-6 flex flex-col items-center gap-3">
+
             {/* Пагінація */}
-            <div className="flex items-center gap-2">
+            <nav className="flex items-center gap-2">
               <button
                 onClick={() => {
                   setMode("page");
@@ -997,8 +1023,10 @@ export default function App() {
                     ? "border-neutral-800 text-neutral-600 cursor-not-allowed"
                     : "border-neutral-800 text-neutral-300 hover:border-yellow-400"
                 )}
+                aria-label="Попередня"
+                title="Попередня"
               >
-                ‹ Попередня
+                ‹
               </button>
 
               {pagesToShow.map((p, idx) =>
@@ -1012,16 +1040,14 @@ export default function App() {
                     className={classNames(
                       "min-w-9 px-3 py-1.5 rounded-lg border text-sm",
                       currentPage === p
-                        ? "border-yellow-400 text-yellow-400"
+                        ? "border-yellow-500/60 bg-yellow-400 text-neutral-950"
                         : "border-neutral-800 text-neutral-300 hover:border-yellow-400"
                     )}
                   >
                     {p}
                   </button>
                 ) : (
-                  <span key={idx} className="px-2 text-neutral-600">
-                    {p}
-                  </span>
+                  <span key={idx} className="px-2 text-neutral-600">…</span>
                 )
               )}
 
@@ -1037,13 +1063,15 @@ export default function App() {
                     ? "border-neutral-800 text-neutral-600 cursor-not-allowed"
                     : "border-neutral-800 text-neutral-300 hover:border-yellow-400"
                 )}
+                aria-label="Наступна"
+                title="Наступна"
               >
-                Наступна ›
+                ›
               </button>
-            </div>
+            </nav>
 
-            {/* Показати ще */}
-            <div className="w-full">
+{/* Показати ще */}
+            <div className="w-full flex justify-center">
               <button
                 onClick={() => {
                   setMode("more");
