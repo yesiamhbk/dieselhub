@@ -3,24 +3,59 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="Ремонт і продаж дизельних форсунок і ПНВТ. Гарантія, діагностика на стенді, доставка по Україні." />
-    <link rel="canonical" href="https://kropdieselhub.com/" />
+
+    <!-- Primary meta -->
+    <title>Diesel Hub — Форсунки та ПНВТ Common Rail</title>
+    <meta name="description" content="Магазин Форсунок і ПНВТ Common Rail. Нові та Відновлені деталі. Гарантія 6 місяців, діагностика на стенді, доставка по Україні." />
+
+    <!-- Canonical -->
+    <link rel="canonical" href="https://dieselhub.com.ua/" />
+
+    <!-- WWW → non-WWW redirect (client-side safety net) -->
+    <script>
+      (function () {
+        if (location.hostname && /^www\./i.test(location.hostname)) {
+          var host = location.hostname.replace(/^www\./i, '');
+          location.replace(location.protocol + '//' + host + location.pathname + location.search + location.hash);
+        }
+      })();
+    </script>
+
     <!-- Open Graph -->
-    <meta property="og:url" content="https://kropdieselhub.com/" />
+    <meta property="og:url" content="https://dieselhub.com.ua/" />
     <meta property="og:site_name" content="Diesel Hub" />
-    <meta property="og:title" content="Diesel Hub — Форсунки та ПНВТ" />
-    <meta property="og:description" content="Ремонт і продаж дизельних форсунок і ПНВТ. Гарантія, діагностика на стенді, доставка по Україні." />
+    <meta property="og:title" content="Diesel Hub — Форсунки та ПНВТ Common Rail" />
+    <meta property="og:description" content="Магазин Форсунок і ПНВТ Common Rail. Нові та Відновлені деталі. Гарантія 6 місяців, діагностика на стенді, доставка по Україні." />
     <meta property="og:image" content="/og-1200x630.png" />
+    <meta property="og:locale" content="uk_UA" />
+
     <!-- Twitter -->
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="Diesel Hub — Форсунки та ПНВТ Common Rail" />
-    <meta name="twitter:description" content="Ремонт і продаж дизельних форсунок і ПНВТ. Гарантія, діагностика на стенді, доставка по Україні." />
+    <meta name="twitter:description" content="Магазин Форсунок і ПНВТ Common Rail. Нові та Відновлені деталі. Гарантія 6 місяців, діагностика на стенді, доставка по Україні." />
     <meta name="twitter:image" content="/og-1200x630.png" />
+
     <link rel="icon" type="image/png" href="/dh-logo.png" />
+
     <!-- Organization JSON-LD -->
     <script type="application/ld+json">
-    {"@context":"https://schema.org","@type":"Organization","name":"Diesel Hub","url":"https://kropdieselhub.com/","logo":"https://kropdieselhub.com/dh-logo.png","telephone":"+380995507055","contactPoint":{"@type":"ContactPoint","telephone":"+380995507055","contactType":"customer support","areaServed":"UA","availableLanguage":["uk"]}}
+    {
+      "@context": "https://schema.org",
+      "@type": "Organization",
+      "name": "Diesel Hub",
+      "url": "https://dieselhub.com.ua/",
+      "logo": "https://dieselhub.com.ua/dh-logo.png",
+      "telephone": "+380665507055",
+      "contactPoint": {
+        "@type": "ContactPoint",
+        "telephone": "+380665507055",
+        "contactType": "customer support",
+        "areaServed": "UA",
+        "availableLanguage": ["uk"]
+      }
+    }
     </script>
+
     <!-- GA4 bootstrap + events -->
     <script type="module" src="/src/ga4.js"></script>
     <!-- Anti-spam (Turnstile + fetch guard) -->

@@ -23,7 +23,7 @@ function isIpAllowed(ip) {
 app.disable('x-powered-by');
 
 // CORS whitelist (prod-safe). Override via CORS_ORIGINS env, comma-separated.
-const DEFAULT_ORIGINS = ['http://localhost:5173','http://127.0.0.1:5173','https://dieselhub.com.ua','https://kropdieselhub.com'];
+const DEFAULT_ORIGINS = ['http://localhost:5173','http://127.0.0.1:5173','https://dieselhub.com.ua','https://kropdieselhub.com','https://www.dieselhub.com.ua','https://www.kropdieselhub.com'];
 const ORIGINS = (process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(',') : DEFAULT_ORIGINS).map(s=>s.trim());
 app.use(cors({
   origin(origin, cb){ if(!origin) return cb(null,true); cb(null, ORIGINS.includes(origin)); },
@@ -403,6 +403,22 @@ app.patch("/api/admin/orders/:id", requireAdmin, async (req, res) => {
     const s = typeof req.body?.status === 'string' ? req.body.status : '';
     const comment = typeof req.body?.admin_comment === 'string' ? String(req.body.admin_comment).slice(0, 1000) : undefined;
     const upd = {};
+    // Items editing (optional)
+    const rawItems = Array.isArray(req.body?.items) ? req.body.items : null;
+    if (rawItems) {
+      const safe = rawItems.map((it) => {
+        const number = String(it.number || it.code || it.sku || "").slice(0, 80);
+        const oem = String(it.oem || it.OEM || "").slice(0, 80);
+        const availability = String(it.availability || it.avail || it.stockStatus || "").slice(0, 80);
+        const cond = String(it.condition || "").slice(0, 40);
+        const qty = Math.max(1, parseInt(it.qty || it.quantity || 1));
+        const price = Math.max(0, Number(it.price || it.unitPrice || 0));
+        return { number, oem, availability, condition: cond, qty, price };
+      });
+      const total = safe.reduce((s, x) => s + (Number(x.qty||1) * Number(x.price||0)), 0);
+      upd.items = safe;
+      upd.total = total;
+    }
     if (s) upd.status = s;
     if (comment !== undefined) upd.admin_comment = comment;
     const payment = typeof req.body?.payment === 'string' ? req.body.payment : undefined;
@@ -694,7 +710,6 @@ app.post("/api/inventory/sync", async (req, res) => {
 });
 /* === ВАЖНО ДЛЯ RENDER === */
 app.listen(process.env.PORT || 10000, "0.0.0.0", () => { console.log("API server listening on port", process.env.PORT || 10000); });
-
 // IP check for admin UI
 app.get("/api/admin/allow-ip", (req, res) => {
   const ip = getClientIP(req);
