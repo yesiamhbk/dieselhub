@@ -18,7 +18,12 @@ RewriteRule ^ index.html [L]
   <FilesMatch "\.(jpg|jpeg|png|gif|webp|avif|svg|ico)$">
     Header set Cache-Control "public, max-age=2592000"
   </FilesMatch>
-  <FilesMatch "^(index\.html|robots\.txt|sitemap\.xml)$">
+  <FilesMatch "^index\.html$">
+    Header set Cache-Control "no-store, no-cache, must-revalidate, max-age=0"
+    Header set Pragma "no-cache"
+    Header set Expires "0"
+  </FilesMatch>
+  <FilesMatch "^(robots\.txt|sitemap\.xml)$">
     Header set Cache-Control "no-cache"
   </FilesMatch>
 </IfModule>
