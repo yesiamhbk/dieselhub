@@ -1,6 +1,7 @@
 // src/App.jsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { captureAttribution, trackEvent, trackSearch } from "./analytics.js";
+import { getPaginationItems } from "./pagination.js";
 import { applyProductSeo, productPath, resetSeo } from "./seo.js";
 
 /** БАЗОВЫЙ URL API (пусто в dev, на проде через VITE_API_BASE) */
@@ -120,22 +121,6 @@ function getWarranty() {
 function formatEngine(v) {
   const n = Number(v);
   return Number.isFinite(n) ? `${n.toFixed(1)} л` : "—";
-}
-
-export function getPaginationItems(totalPages, currentPage) {
-  if (totalPages <= 9) {
-    return Array.from({ length: totalPages }, (_, index) => index + 1);
-  }
-
-  if (currentPage <= 4) {
-    return [1, 2, 3, 4, "…", totalPages - 2, totalPages - 1, totalPages];
-  }
-
-  if (currentPage >= totalPages - 3) {
-    return [1, 2, 3, "…", totalPages - 3, totalPages - 2, totalPages - 1, totalPages];
-  }
-
-  return [1, 2, "…", currentPage - 1, currentPage, currentPage + 1, "…", totalPages - 1, totalPages];
 }
 
 /* ====== Телефон UA: маска + акуратне редагування ====== */
