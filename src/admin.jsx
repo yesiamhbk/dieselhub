@@ -117,17 +117,6 @@ export default function AdminPanel() {
       } catch (e) { setIpAllowed(false); }
     })();
   }, []);
-  if (ipAllowed === false) {
-    return (
-      <div className="min-h-screen bg-black text-center text-neutral-300 flex items-center justify-center">
-        <div className="p-6 rounded-xl border border-neutral-800 bg-neutral-950 max-w-md">
-          <div className="text-xl font-semibold mb-2">Доступ за IP заборонено</div>
-          <div className="text-sm text-neutral-400">Ваш IP не у білому списку. Зверніться до адміністратора.</div>
-        </div>
-      </div>
-    );
-  }
-
   /* --- токен --- */
   const storedToken = localStorage.getItem("dh_admin_token") || "";
   const [token, setToken] = useState(storedToken);
@@ -639,6 +628,25 @@ export default function AdminPanel() {
   }
 
   /* ===== экран логина ===== */
+  // Keep every hook above the IP guard so the hook order cannot change after
+  // the asynchronous allow-list check resolves.
+  if (ipAllowed !== true) {
+    return (
+      <div className="min-h-screen bg-black text-center text-neutral-300 flex items-center justify-center">
+        <div className="p-6 rounded-xl border border-neutral-800 bg-neutral-950 max-w-md">
+          {ipAllowed === null ? (
+            <div className="text-sm text-neutral-400">Перевірка доступу…</div>
+          ) : (
+            <>
+              <div className="text-xl font-semibold mb-2">Доступ за IP заборонено</div>
+              <div className="text-sm text-neutral-400">Ваш IP не у білому списку. Зверніться до адміністратора.</div>
+            </>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   if (apiOk !== true) {
     return (
       <div className="min-h-screen bg-neutral-950 text-neutral-100 grid place-items-center">
