@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://kropdieselhub.com/sitemap.xml
+Sitemap: https://dieselhub.com.ua/sitemap.xml
