@@ -1514,16 +1514,15 @@ export default function App() {
       
 {/* Checkout Modal (safe) */}
 {checkoutOpen && (
-  <div className="fixed inset-0 z-[80]">
+  <div className="checkout-overlay fixed inset-0 z-[80]">
     <div className="modal-backdrop absolute inset-0 bg-black/60" onClick={() => setCheckoutOpen(false)} />
-    <div className="checkout-dialog absolute inset-x-0 top-10 mx-auto max-w-4xl bg-neutral-950 border border-neutral-800 rounded-2xl overflow-hidden">
-      <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-800">
+    <div className="checkout-dialog max-w-4xl bg-neutral-950 border border-neutral-800 rounded-2xl overflow-hidden" role="dialog" aria-modal="true" aria-label="Оформлення замовлення">
+      <div className="checkout-header flex items-center justify-between px-4 py-3 border-b border-neutral-800">
         <div className="text-lg font-semibold">Оформлення</div>
-        <button onClick={() => setCheckoutOpen(false)} className="text-white hover:text-neutral-300">Закрити</button>
+        <button type="button" onClick={() => setCheckoutOpen(false)} className="text-white hover:text-neutral-300" aria-label="Закрити оформлення замовлення">Закрити</button>
       </div>
 
-      {/* Контент: скролл внутрь, чтобы окно было ниже */}
-      <div className="p-3 max-h-[78vh] overflow-y-auto">
+      <div className="checkout-scroll p-3">
         {orderPlaced && (
           <div className="py-10 flex flex-col items-center text-center gap-4">
             <div className="h-16 w-16 rounded-full border border-emerald-400 bg-emerald-500/10 grid place-items-center">
@@ -1559,9 +1558,9 @@ export default function App() {
             </div>
           </div>
         )}
-        <div className={classNames("grid md:grid-cols-2 gap-4", orderPlaced && "hidden")}>
+        <div className={classNames("checkout-layout grid md:grid-cols-2 gap-4", orderPlaced && "hidden")}>
           {/* Left: Form */}
-          <div className="space-y-3">
+          <div className="checkout-form space-y-3">
             <label className="block">
               <div className="text-sm mb-1">ПІБ</div>
               <input
@@ -1576,7 +1575,7 @@ export default function App() {
             <label className="block">
               <div className="text-sm mb-1">Телефон</div>
               <div className="flex items-center gap-2">
-                <span className="inline-flex items-center justify-center rounded-lg bg-neutral-900 border border-neutral-800 px-3 py-2 text-sm select-none">+380</span>
+                <span className="checkout-phone-prefix inline-flex items-center justify-center rounded-lg bg-neutral-900 border border-neutral-800 px-3 py-2 text-sm select-none">+380</span>
                 <input
                   inputMode="numeric"
                   pattern="[0-9]*"
@@ -1584,7 +1583,7 @@ export default function App() {
                   value={formatPhoneMask(order.phone || "")}
                   onChange={(e)=>{ const d=(e.target.value||"").replace(/\D/g,"").slice(0,9); setOrder(o=>({...o, phone:d})); }}
                   onKeyDown={(e) => { if (e.key === "Backspace") { const input = e.target; const before = (input.value || "").slice(0, input.selectionStart || 0); const digitsBefore = (before.match(/\d/g) || []).length; const prev = (order.phone || ""); if (digitsBefore > 0) { const next = prev.slice(0, digitsBefore - 1) + prev.slice(digitsBefore); setOrder(o => ({ ...o, phone: next })); e.preventDefault(); } } }}
-                        className="flex-1 rounded-lg bg-neutral-900 border border-neutral-800 px-3 py-2 text-sm outline-none focus:border-[#34B7B7]"
+                        className="checkout-phone-input min-w-0 flex-1 rounded-lg bg-neutral-900 border border-neutral-800 px-3 py-2 text-sm outline-none focus:border-[#34B7B7]"
                   placeholder="(XX) XXX-XX-XX"
                 />
               </div>
@@ -1740,7 +1739,7 @@ export default function App() {
 
             
             {/* Checkboxes */}
-            <label className="flex items-center gap-2 mt-2">
+            <label className="checkout-consent flex items-start gap-2 mt-2">
               <input
                 type="checkbox"
                 checked={!!order.agree}
@@ -1753,7 +1752,7 @@ export default function App() {
               </span>
             </label>
 
-            <label className="flex items-center gap-2">
+            <label className="checkout-consent flex items-start gap-2">
               <input
                 type="checkbox"
                 checked={!!order.agreeLegal}
@@ -1770,9 +1769,9 @@ export default function App() {
           </div>
 
           {/* Right: Summary + Submit full width */}
-          <div className="rounded-xl border border-neutral-800 p-3 flex flex-col">
+          <div className="checkout-summary rounded-xl border border-neutral-800 p-3 flex flex-col">
             <div className="text-white text-lg mb-2">Ваше замовлення</div>
-            <div className="space-y-3 max-h-80 overflow-auto pr-2">
+            <div className="checkout-order-items space-y-3 max-h-80 overflow-auto pr-2">
   {cartItems.map((it, idx) => {
     const name = (it.name || it.title || it.model || it.number || it.id || "").toString();
     const primary = (name ? name : `${it.number || ""}${it.oem ? ' / ' + it.oem : ''}`);
@@ -1806,7 +1805,7 @@ export default function App() {
               <div className="font-semibold text-[#34B7B7]">{cartTotal.toLocaleString("uk-UA")} ₴</div>
             </div>
             {/* Submit full width under total */}
-            <div className="pt-3">
+            <div className="checkout-submit pt-3">
               {(() => {
                 const nameValid = /^[A-Za-zА-Яа-яЁёІіЇїЄєҐґ'’ -]{1,50}$/.test(order.name || "");
                 const phoneValid = /^[0-9]{9}$/.test(order.phone || "");
