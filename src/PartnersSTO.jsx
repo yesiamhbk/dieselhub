@@ -1,98 +1,95 @@
-// src/PartnersSTO.jsx
 import React from "react";
+import { InfoHero, PageFooter, PageHeader, SITE_PHONE, SITE_PHONE_HREF } from "./InfoShell.jsx";
 
 export default function PartnersSTO() {
   return (
-    <div className="min-h-screen bg-neutral-950 text-neutral-100">
-      <header className="border-b border-neutral-900 bg-neutral-950/80 backdrop-blur">
-        <div className="mx-auto max-w-7xl px-4 py-6 flex items-center justify-between">
-          <a href="#/" className="font-extrabold text-lg hover:text-yellow-400">Diesel Hub</a>
-          <nav className="flex items-center gap-3">
-            <a href="#/" className="rounded-xl border border-neutral-800 px-3 py-1.5 hover:border-yellow-400">Каталог</a>
-            <a href="#/trade-in" className="rounded-xl border border-neutral-800 px-3 py-1.5 hover:border-yellow-400">Trade‑In</a>
-            <a href="#/warranty" className="rounded-xl border border-neutral-800 px-3 py-1.5 hover:border-yellow-400">Гарантія</a>
-          </nav>
-        </div>
-      </header>
+    <div className="info-page">
+      <PageHeader action="Стати партнером" />
+      <main>
+        <InfoHero
+          eyebrow="Diesel Hub для СТО"
+          title="Надійний партнер"
+          accent="для дизельного сервісу"
+          lead="Допомагаємо СТО швидше закривати складні ремонти: підбираємо форсунки та ПНВТ, перевіряємо компоненти й погоджуємо партнерські умови під конкретне замовлення."
+          meta="Підбір за номером · Перевірка на стенді · Гарантія на роботи"
+        />
 
-      <main className="mx-auto max-w-7xl px-4 py-10">
-        <section className="grid md:grid-cols-2 gap-8 items-start">
-          <div>
-            <h1 className="text-3xl md:text-4xl font-extrabold leading-tight text-white">
-              Партнерство для СТО
-            </h1>
-            <p className="mt-3 text-neutral-300">
-              Ми співпрацюємо з сервісними станціями технічного обслуговування (СТО) і надаємо
-              партнерські <span className="text-yellow-400 font-semibold">знижки</span> на
-              <span className="font-semibold"> ремонт та відновлення</span> компонентів дизельних систем.
-            </p>
-
-            <div className="mt-6 grid gap-3">
-              <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 p-4">
-                <div className="text-neutral-400 text-xs uppercase tracking-wide">Принцип</div>
-                <div className="mt-1 text-sm text-neutral-200">
-                  Розмір знижки залежить від типу робіт і конкретного кейсу. Точний відсоток погоджується
-                  з менеджером при оформленні замовлення.
-                </div>
-              </div>
-              <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 p-4">
-                <div className="text-neutral-400 text-xs uppercase tracking-wide">Що входить</div>
-                <ul className="mt-1 text-sm text-neutral-200 list-disc pl-5 space-y-1">
-                  <li>Діагностика та перевірка на стенді</li>
-                  <li>Відновлення / ремонт форсунок і ТНВД</li>
-                  <li>Підбір та консультація по запчастинах</li>
-                  <li>Гарантія на виконані роботи</li>
-                </ul>
-              </div>
+        <section className="service-section">
+          <div className="info-container">
+            <div className="service-heading">
+              <div className="info-eyebrow info-eyebrow-dark">Партнерські можливості</div>
+              <h2>Менше часу на пошук — більше завершених ремонтів</h2>
+              <p>Умови та розмір знижки погоджуються індивідуально залежно від деталей, робіт і обсягу співпраці.</p>
             </div>
-
-            <div className="mt-6 flex flex-wrap items-center gap-2">
-              <a
-                href="#/"
-                className="rounded-2xl border border-yellow-500/60 bg-yellow-400 text-neutral-950 px-4 py-2 font-semibold hover:brightness-95"
-              >
-                До каталогу
-              </a>
-              <a
-                href="#/warranty"
-                className="rounded-2xl border border-neutral-700 px-4 py-2 font-semibold hover:border-yellow-400"
-              >
-                Умови гарантії
-              </a>
+            <div className="service-card-grid service-card-grid-three">
+              <article className="service-card">
+                <span className="service-card-number">01</span>
+                <h3>Точний підбір</h3>
+                <p>Звіряємо OEM і крос-номери, допомагаємо знайти сумісну деталь без зайвих замовлень.</p>
+              </article>
+              <article className="service-card service-card-accent">
+                <span className="service-card-number">02</span>
+                <h3>Діагностика та ремонт</h3>
+                <p>Перевіряємо компоненти дизельної системи та погоджуємо необхідний обсяг робіт.</p>
+              </article>
+              <article className="service-card">
+                <span className="service-card-number">03</span>
+                <h3>Партнерські умови</h3>
+                <p>Формуємо пропозицію для СТО з урахуванням типу замовлення та регулярності звернень.</p>
+              </article>
             </div>
-
-            <p className="mt-4 text-xs text-neutral-400">
-              Для узгодження знижки зверніться до менеджера перед оформленням робіт.
-            </p>
           </div>
+        </section>
 
-          <div className="rounded-2xl border border-neutral-800 bg-gradient-to-br from-neutral-900 to-neutral-950 p-4">
-            <div className="text-sm text-neutral-300">
-              <div className="font-semibold text-neutral-200">Як працюємо з партнерами:</div>
-              <ol className="list-decimal pl-5 space-y-1 mt-2">
-                <li>Ви залишаєте запит або контактуєте менеджера.</li>
-                <li>Уточнюємо тип робіт та погоджуємо розмір знижки.</li>
-                <li>Виконуємо діагностику/ремонт та повідомляємо про готовність.</li>
-                <li>Надаємо гарантійні умови на виконані роботи.</li>
-              </ol>
+        <section className="service-process-section">
+          <div className="info-container service-process-grid">
+            <div>
+              <div className="info-eyebrow info-eyebrow-dark">Початок співпраці</div>
+              <h2>Простий робочий процес</h2>
+              <p className="service-process-lead">Без складних форм і довгого погодження. Зв’язуємося, уточнюємо задачу та пропонуємо рішення.</p>
             </div>
-            <div className="mt-4 grid gap-3 text-sm">
-              <div className="rounded-xl border border-neutral-800 p-3">
-                <div className="text-neutral-400 text-xs">Для кого</div>
-                <div className="text-neutral-200">СТО та майстерні, що працюють із дизельними системами</div>
+            <ol className="service-process-list">
+              <li><span>01</span><div><strong>Залишаєте запит</strong><p>Повідомляєте номер деталі, автомобіль або описуєте необхідні роботи.</p></div></li>
+              <li><span>02</span><div><strong>Уточнюємо задачу</strong><p>Перевіряємо доступні варіанти й погоджуємо партнерські умови.</p></div></li>
+              <li><span>03</span><div><strong>Виконуємо замовлення</strong><p>Проводимо діагностику, ремонт або готуємо потрібні запчастини.</p></div></li>
+              <li><span>04</span><div><strong>Надаємо гарантію</strong><p>Фіксуємо погоджені умови та залишаємося на зв’язку після отримання.</p></div></li>
+            </ol>
+          </div>
+        </section>
+
+        <section className="sto-details-section">
+          <div className="info-container sto-details-grid">
+            <div className="sto-details-main">
+              <div className="info-eyebrow">Для кого</div>
+              <h2>СТО та майстерні, які працюють з дизельними системами</h2>
+              <p>Підходимо як для разових складних запитів, так і для постійної співпраці.</p>
+            </div>
+            <div className="sto-detail-list">
+              <div><span>Асортимент</span><strong>Форсунки, ПНВТ і комплектуючі</strong></div>
+              <div><span>Логістика</span><strong>Нова пошта по всій Україні</strong></div>
+              <div><span>Оплата</span><strong>Готівкова або безготівкова</strong></div>
+              <div><span>Підтримка</span><strong>Прямий зв’язок з менеджером</strong></div>
+            </div>
+          </div>
+        </section>
+
+        <section className="service-callout-section">
+          <div className="info-container">
+            <div className="service-callout">
+              <div>
+                <div className="info-eyebrow">Обговоримо ваші задачі</div>
+                <h2>Потрібен надійний постачальник для СТО?</h2>
+                <p>Зателефонуйте менеджеру — узгодимо формат співпраці та умови для вашого сервісу.</p>
               </div>
-              <div className="rounded-xl border border-neutral-800 p-3">
-                <div className="text-neutral-400 text-xs">Оплата</div>
-                <div className="text-neutral-200">Безготівково/готівкою. Для Нової пошти — накладений платіж або передплата.</div>
-              </div>
-              <div className="rounded-xl border border-neutral-800 p-3">
-                <div className="text-neutral-400 text-xs">Відправлення</div>
-                <div className="text-neutral-200">Нова пошта по Україні, самовивіз у Кропивницькому.</div>
-              </div>
+              <a href={SITE_PHONE_HREF} className="service-phone-card">
+                <span>Партнерський відділ</span>
+                <strong>{SITE_PHONE}</strong>
+              </a>
             </div>
           </div>
         </section>
       </main>
+      <PageFooter />
     </div>
   );
 }

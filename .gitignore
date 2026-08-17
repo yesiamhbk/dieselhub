@@ -16,6 +16,7 @@ dist/
 
 # Vite cache
 .vite/
+.local-demo/
 
 # backups
 *.bak

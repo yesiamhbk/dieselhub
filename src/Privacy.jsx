@@ -1,53 +1,68 @@
-// src/Privacy.jsx
 import React from "react";
+import { InfoHero, PageFooter, PageHeader, PolicySection } from "./InfoShell.jsx";
 
 export default function Privacy() {
   return (
-    <div className="min-h-screen bg-neutral-950 text-neutral-100">
-      <header className="sticky top-0 z-10 bg-neutral-950/60 backdrop-blur-md border-b border-neutral-800">
-        <div className="mx-auto max-w-7xl px-4 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <img src="/dh-logo.png" alt="Diesel Hub" className="w-7 h-7 object-contain select-none" draggable="false" />
-            <div className="font-bold">Політика конфіденційності</div>
+    <div className="info-page">
+      <PageHeader />
+      <main>
+        <InfoHero
+          eyebrow="Захист персональних даних"
+          title="Політика"
+          accent="конфіденційності"
+          lead="Пояснюємо, які дані потрібні для замовлення, як ми їх використовуємо та кому можемо передавати для доставки й оплати."
+          meta={`Чинна редакція від ${new Date().toLocaleDateString("uk-UA")}`}
+        />
+
+        <section className="policy-layout-section legal-layout-section">
+          <div className="info-container policy-layout">
+            <aside className="policy-aside">
+              <div className="info-eyebrow info-eyebrow-dark">Ваші права</div>
+              <h2>Ви можете звернутися щодо</h2>
+              <ul>
+                <li>Доступу до своїх даних</li>
+                <li>Виправлення інформації</li>
+                <li>Видалення або обмеження</li>
+                <li>Заперечення проти обробки</li>
+              </ul>
+            </aside>
+
+            <div className="policy-sections">
+              <PolicySection number="01" title="Контролер даних">
+                <p>ФОП Волошин Денис Станіславович, РНОКПП 3728401193. Контактні дані для звернень зазначені на сайті.</p>
+              </PolicySection>
+              <PolicySection number="02" title="Які дані ми обробляємо">
+                <ul>
+                  <li>Ім’я, номер телефону, електронну пошту та адресу доставки.</li>
+                  <li>Склад замовлення, суму, спосіб оплати й доставки.</li>
+                  <li>Технічні журнали: IP-адресу, час події, версію згоди та ідентифікатори сесії.</li>
+                </ul>
+              </PolicySection>
+              <PolicySection number="03" title="Навіщо потрібні дані">
+                <ul>
+                  <li>Для оформлення, оплати й доставки замовлення.</li>
+                  <li>Для гарантійного обслуговування та повернення.</li>
+                  <li>Для захисту від шахрайства й ведення журналів подій.</li>
+                  <li>Для маркетингових повідомлень — лише за окремою добровільною згодою.</li>
+                </ul>
+              </PolicySection>
+              <PolicySection number="04" title="Кому можуть передаватися дані">
+                <p>Новій пошті, банку або платіжному провайдеру, а також хостинговим та IT-постачальникам, зокрема Supabase і Render, лише в обсязі, необхідному для роботи відповідної послуги.</p>
+              </PolicySection>
+              <PolicySection number="05" title="Строк зберігання">
+                <p>Дані замовлень зберігаються не менше строків, передбачених для бухгалтерського обліку. Технічні журнали — до 12 місяців або доки вони потрібні для визначеної мети обробки.</p>
+              </PolicySection>
+              <PolicySection number="06" title="Права користувача">
+                <p>Ви маєте право запросити доступ, виправлення, видалення чи обмеження обробки даних, а також подати заперечення або звернутися до Уповноваженого Верховної Ради України з прав людини.</p>
+              </PolicySection>
+              <PolicySection number="07" title="Cookies та аналітика">
+                <p>Сайт використовує необхідні cookies і базову аналітику. Обмежити їх можна у налаштуваннях браузера, але це може вплинути на роботу окремих функцій.</p>
+              </PolicySection>
+            </div>
           </div>
-          <a href="#/" className="text-sm text-neutral-400 hover:text-white">На головну</a>
-        </div>
-      </header>
-
-      <main className="mx-auto max-w-5xl px-4 py-8">
-        <p className="text-neutral-400 text-sm">Чинна редакція від {new Date().toLocaleDateString("uk-UA")}.</p>
-
-        <section className="mt-6 space-y-3 text-neutral-200">
-          <h2 className="text-xl font-semibold">1. Контролер даних</h2>
-          <p>ФОП Волошин Денис Станіславович (РНОКПП 3728401193). Контакти — у футері сайту.</p>
-
-          <h2 className="text-xl font-semibold mt-6">2. Які дані ми обробляємо</h2>
-          <ul className="list-disc pl-5 space-y-2">
-            <li>Ідентифікаційні та контактні дані: ПІБ, телефон, e‑mail, адреса доставки.</li>
-            <li>Дані замовлення: склад, суми, спосіб оплати/доставки.</li>
-            <li>Технічні журнали: IP, час події, версія оферти/згоди, ідентифікатори сесії.</li>
-          </ul>
-
-          <h2 className="text-xl font-semibold mt-6">3. Цілі та правові підстави</h2>
-          <ul className="list-disc pl-5 space-y-2">
-            <li>Виконання договору (обробка замовлень, доставка, гарантія/повернення).</li>
-            <li>Згода (маркетингові розсилки — окремо та добровільно).</li>
-            <li>Законний інтерес (захист від шахрайства, ведення журналів подій).</li>
-          </ul>
-
-          <h2 className="text-xl font-semibold mt-6">4. Передача третім особам</h2>
-          <p>«Нова пошта», платіжні провайдери/банк (для передплати), хостингові/IT‑провайдери (Supabase/Render).</p>
-
-          <h2 className="text-xl font-semibold mt-6">5. Строк зберігання</h2>
-          <p>Дані замовлень — не менше строків бухобліку; технічні журнали — до 12 міс. або доки потрібні для цілей обробки.</p>
-
-          <h2 className="text-xl font-semibold mt-6">6. Права суб’єктів даних</h2>
-          <p>Доступ, виправлення, видалення, обмеження, заперечення; звернення до Уповноваженого ВРУ з прав людини. Звернення — на e‑mail, вказаний у футері.</p>
-
-          <h2 className="text-xl font-semibold mt-6">7. Cookies/аналітика</h2>
-          <p>Використовуємо необхідні cookies та базову аналітику. Ви можете обмежити їх у налаштуваннях браузера.</p>
         </section>
       </main>
+      <PageFooter />
     </div>
   );
 }

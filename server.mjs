@@ -2,7 +2,9 @@
 import express from "express";
 import cors from "cors";
 import multer from "multer";
+import crypto from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
+import { buildTelegramOrderMessage } from "./lib/telegram-order.mjs";
 
 const app = express();
 app.set('trust proxy', true);
@@ -85,6 +87,10 @@ if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
 // ====== Supabase (admin) ======
 const supaAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
+const textValue = (value, max = 200) => String(value || "").trim().slice(0, max);
+const normalizePartNumber = (value) => textValue(value, 120).toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 80);
+const hashIp = (ip) => crypto.createHash("sha256").update(`${process.env.ANALYTICS_SALT || "dieselhub-local"}|${ip}`).digest("hex").slice(0, 24);
+
 // ====== простая админ-авторизация ======
 function requireAdmin(req, res, next) {
   const ip = getClientIP(req);
@@ -134,12 +140,77 @@ app.get("/api/products", async (_req, res) => {
   }
 });
 
+app.get(["/sitemap.xml", "/api/sitemap.xml"], async (_req, res) => {
+  try {
+    const { data, error } = await supaAdmin.from("products").select("number").not("number", "is", null).order("id", { ascending: true });
+    if (error) throw error;
+    const escapeXml = (value) => String(value).replace(/[<>&'\"]/g, char => ({ "<":"&lt;", ">":"&gt;", "&":"&amp;", "'":"&apos;", '"':"&quot;" }[char]));
+    const urls = ["https://dieselhub.com.ua/", ...(data || []).map(product => `https://dieselhub.com.ua/product/${encodeURIComponent(String(product.number).trim())}`)];
+    res.type("application/xml").send(`<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${urls.map(url => `\n  <url><loc>${escapeXml(url)}</loc></url>`).join("")}\n</urlset>`);
+  } catch (error) { res.status(500).type("text/plain").send("sitemap unavailable"); }
+});
+
+// Anonymous, allow-listed funnel/search collection. No raw IP, cookies or contact data.
+app.post("/api/analytics/event", async (req, res) => {
+  const allowedTypes = new Set(["visit", "search", "product_view", "add_to_cart", "checkout_start", "order", "zero_result_lead"]);
+  const src = req.body || {};
+  const eventType = textValue(src.event_type, 40);
+  if (!allowedTypes.has(eventType)) return res.status(400).json({ error: "invalid_event" });
+  const props = src.properties && typeof src.properties === "object" ? src.properties : {};
+  const attr = src.attribution && typeof src.attribution === "object" ? src.attribution : {};
+  const row = {
+    event_type: eventType,
+    session_id: textValue(src.session_id, 80) || null,
+    page_path: textValue(src.page_path, 500) || null,
+    query: eventType === "search" ? textValue(props.query, 120) : null,
+    normalized_query: eventType === "search" ? normalizePartNumber(props.normalized_query || props.query) : null,
+    result_count: eventType === "search" ? Math.max(0, Math.min(10000, Number(props.result_count) || 0)) : null,
+    product_id: props.product_id == null ? null : textValue(props.product_id, 100),
+    product_number: textValue(props.product_number, 120) || null,
+    event_value: Math.max(0, Number(props.value) || 0),
+    source: textValue(attr.source, 120) || "direct",
+    medium: textValue(attr.medium, 120) || null,
+    campaign: textValue(attr.campaign, 160) || null,
+    referrer: textValue(attr.referrer, 500) || null,
+    landing_path: textValue(attr.landing_path, 500) || null,
+    ip_hash: hashIp(getClientIP(req)),
+    user_agent_family: textValue(req.get("user-agent"), 240) || null,
+  };
+  try {
+    const { error } = await supaAdmin.from("analytics_events").insert(row);
+    if (error) throw error;
+    res.status(202).json({ ok: true });
+  } catch (error) {
+    console.warn("[analytics insert] skip:", error.message || error);
+    res.status(202).json({ ok: false });
+  }
+});
+
+app.get("/api/admin/analytics", requireAdmin, async (req, res) => {
+  const days = Math.max(1, Math.min(365, Number(req.query.days) || 30));
+  try {
+    const { data, error } = await supaAdmin.rpc("analytics_dashboard", { p_days: days });
+    if (error) throw error;
+    res.json(data);
+  } catch (error) { res.status(500).json({ error: "analytics_unavailable" }); }
+});
+
 // Создание/апсерта товара
 app.post("/api/admin/product", requireAdmin, async (req, res) => {
   try {
     const src = req.body || {};
     const allowed = ["price","qty","availability","number","oem","cross","compat_for","manufacturer","condition","type","engine","images","sort_order","pinned"];
     const payload = Object.fromEntries(Object.entries(src).filter(([k]) => allowed.includes(k)));
+    const qty = payload.qty === "" || payload.qty == null ? 0 : Number(payload.qty);
+    const price = payload.price === "" || payload.price == null ? 0 : Number(payload.price);
+    const engine = payload.engine === "" || payload.engine == null ? null : Number(payload.engine);
+    if (!Number.isInteger(qty) || qty < 0) return res.status(400).json({ error: "invalid_qty" });
+    if (!Number.isFinite(price) || price < 0) return res.status(400).json({ error: "invalid_price" });
+    if (engine !== null && (!Number.isFinite(engine) || engine <= 0)) return res.status(400).json({ error: "invalid_engine" });
+    payload.qty = qty;
+    payload.price = price;
+    payload.engine = engine;
+    payload.availability = qty > 0 ? "В наявності" : "Під замовлення";
     const { data, error } = await supaAdmin
       .from("products")
       .upsert(payload)
@@ -162,6 +233,22 @@ app.patch("/api/admin/product/:id", requireAdmin, async (req, res) => {
     const patch = {};
     for (const k of allowed) if (k in src && src[k] !== undefined) patch[k] = src[k];
     if (Object.keys(patch).length === 0) return res.json({ ok: true });
+    if ("qty" in patch) {
+      const qty = patch.qty === "" || patch.qty == null ? 0 : Number(patch.qty);
+      if (!Number.isInteger(qty) || qty < 0) return res.status(400).json({ error: "invalid_qty" });
+      patch.qty = qty;
+      if (!("availability" in patch)) patch.availability = qty > 0 ? "В наявності" : "Під замовлення";
+    }
+    if ("price" in patch) {
+      const price = patch.price === "" || patch.price == null ? 0 : Number(patch.price);
+      if (!Number.isFinite(price) || price < 0) return res.status(400).json({ error: "invalid_price" });
+      patch.price = price;
+    }
+    if ("engine" in patch) {
+      const engine = patch.engine === "" || patch.engine == null ? null : Number(patch.engine);
+      if (engine !== null && (!Number.isFinite(engine) || engine <= 0)) return res.status(400).json({ error: "invalid_engine" });
+      patch.engine = engine;
+    }
 // (One-off) Очистка поля models (переводим в NULL для всего каталога)
 app.post("/api/admin/migrate/clear-models", requireAdmin, async (_req, res) => {
   try {
@@ -300,16 +387,23 @@ app.post("/api/order", async (req, res) => {
     const name = String(body.name || "").trim();
     const phone = String(body.phone || "").trim();
     const delivery = String(body.delivery || "Нова пошта");
-    const payment = typeof body.payment === 'string' ? String(body.payment) : null;
-    const total = Number(body.total || 0);
-
-    const itemsText = body.items
-      .map(i => `• ${i.number || i.id} | ${i.availability || "—"} | ${i.condition || "—"} | ${i.type || "—"} | ${i.qty} шт × ${i.price} ₴`)
-      .join("\n");
+    const payment = typeof body.payment === "string" ? String(body.payment).trim() : null;
+    const safeItems = body.items.map((item) => ({
+      id: item.id || null,
+      number: String(item.number || "").slice(0, 100),
+      oem: String(item.oem || "").slice(0, 100),
+      availability: String(item.availability || "").slice(0, 80),
+      condition: String(item.condition || "").slice(0, 50),
+      type: String(item.type || "").slice(0, 100),
+      qty: Math.max(1, Number.parseInt(item.qty, 10) || 1),
+      price: Math.max(0, Number(item.price) || 0),
+    }));
+    const total = safeItems.reduce((sum, item) => sum + item.qty * item.price, 0);
 
     
     // Save order to Supabase (fail-soft)
     let savedOrderId = null;
+    let savedOrderNumber = null;
     try {
       const { data: ins, error: insErr } = await supaAdmin
         .from("orders")
@@ -319,41 +413,54 @@ app.post("/api/order", async (req, res) => {
           delivery,
           payment,
           total,
-          items: body.items,
-          utm: body.utm || null,
+          items: safeItems,
+          utm: body.attribution || body.utm || null,
+          source: textValue(body.attribution?.source, 120) || null,
+          medium: textValue(body.attribution?.medium, 120) || null,
+          campaign: textValue(body.attribution?.campaign, 160) || null,
+          gclid: textValue(body.attribution?.gclid, 180) || null,
+          referrer: textValue(body.attribution?.referrer, 500) || null,
+          landing_path: textValue(body.attribution?.landing_path, 500) || null,
           device_id: deviceId || null,
           ip,
           status: "Новий"
         })
-        .select("id")
+        .select()
         .single();
       if (insErr) throw insErr;
       savedOrderId = ins?.id || null;
+      savedOrderNumber = Number(ins?.order_number) || null;
+      if (!savedOrderNumber) {
+        const { count } = await supaAdmin.from("orders").select("id", { count: "exact", head: true });
+        savedOrderNumber = Number(count) || null;
+      }
     } catch (e) {
       console.warn("[orders insert] skip:", e.message || e);
     }
-const text =
-      `🛒 *Нове замовлення*\n` +
-      `👤 ${name}\n` +
-      `📞 ${phone}\n` +
-      `🚚 ${delivery}\n` +
-      `💳 ${payment || "—"}\n` +
-      (body.utm ? `🔗 utm: ${JSON.stringify(body.utm)}\n` : "") +
-      `📱 device: ${deviceId || "—"}\n` +
-      `🌐 ip: ${ip || "—"}\n\n` +
-      `${itemsText}\n\n` +
-      `Σ Разом: *${total.toLocaleString("uk-UA")} ₴*`;
+    const text = buildTelegramOrderMessage({
+      orderNumber: savedOrderNumber,
+      name,
+      phone,
+      delivery,
+      payment,
+      items: safeItems,
+      total,
+    });
 
     if (TELEGRAM_BOT_TOKEN && TELEGRAM_CHAT_ID) {
       const tgUrl = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
-      await fetch(tgUrl, {
+      const telegramResponse = await fetch(tgUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ chat_id: TELEGRAM_CHAT_ID, text, parse_mode: "Markdown" }),
+        body: JSON.stringify({ chat_id: TELEGRAM_CHAT_ID, text, parse_mode: "HTML" }),
       });
+      if (!telegramResponse.ok) {
+        const telegramError = await telegramResponse.text().catch(() => "");
+        console.error("[Telegram order notification] failed:", telegramResponse.status, telegramError.slice(0, 500));
+      }
     }
 
-    res.json({ ok: true });
+    res.json({ ok: true, orderNumber: savedOrderNumber, id: savedOrderId });
   } catch (e) {
     console.error("[POST /api/order] error:", e);
     res.status(500).json({ error: String(e.message || e) });
@@ -367,7 +474,7 @@ app.get("/api/admin/orders", requireAdmin, async (_req, res) => {
   try {
     const { data, error } = await supaAdmin
       .from("orders")
-      .select("id,created_at,name,phone,delivery,payment,total,items,status,device_id,ip,utm,admin_comment")
+      .select()
       .order("created_at", { ascending: false })
       .limit(200);
     if (error) {
@@ -386,7 +493,7 @@ app.get("/api/admin/orders/:id", requireAdmin, async (req, res) => {
   try {
     const { data, error } = await supaAdmin
       .from("orders")
-      .select("id,created_at,name,phone,delivery,payment,total,items,status,device_id,ip,utm,admin_comment")
+      .select()
       .eq("id", req.params.id)
       .single();
     if (error) return res.status(404).json({ error: "not_found" });

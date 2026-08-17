@@ -1,59 +1,49 @@
-// src/seo.js
-// Lightweight SEO helper: builds JSON-LD ItemList from products once.
+const SITE_URL = "https://dieselhub.com.ua";
+const DEFAULT_TITLE = "Diesel Hub — Форсунки та ПНВТ Common Rail";
+const DEFAULT_DESCRIPTION = "Магазин форсунок і ПНВТ Common Rail. Нові та відновлені деталі, гарантія 6 місяців і доставка по Україні.";
 
-(function () {
-  const MAX_ITEMS = 50;
-  let injected = false;
+function setMeta(selector, attribute, value) {
+  let node = document.head.querySelector(selector);
+  if (!node) { node = document.createElement("meta"); document.head.appendChild(node); }
+  const [name, key] = attribute;
+  node.setAttribute(name, key);
+  node.setAttribute("content", value);
+}
 
-  function injectJsonLd(products) {
-    if (injected) return;
-    injected = true;
-    try {
-      const list = (products || []).slice(0, MAX_ITEMS).map((p, idx) => ({
-        "@type": "ListItem",
-        "position": idx + 1,
-        "item": {
-          "@type": "Product",
-          "name": [p.manufacturer, p.number].filter(Boolean).join(" "),
-          "sku": p.number || String(p.id || ""),
-          "mpn": p.oem || undefined,
-          "brand": p.manufacturer ? { "@type": "Brand", "name": p.manufacturer } : undefined,
-          "offers": {
-            "@type": "Offer",
-            "priceCurrency": "UAH",
-            "price": typeof p.price === "number" ? p.price : String(p.price || ""),
-            "availability": (p.availability && /in|в наявності/i.test(p.availability)) ? "http://schema.org/InStock" : "http://schema.org/PreOrder"
-          }
-        }
-      }));
+function setCanonical(url) {
+  let node = document.head.querySelector('link[rel="canonical"]');
+  if (!node) { node = document.createElement("link"); node.rel = "canonical"; document.head.appendChild(node); }
+  node.href = url;
+}
 
-      const jsonLd = {
-        "@context": "https://schema.org",
-        "@type": "ItemList",
-        "itemListElement": list
-      };
-      const script = document.createElement("script");
-      script.type = "application/ld+json";
-      script.textContent = JSON.stringify(jsonLd);
-      document.head.appendChild(script);
-    } catch (e) {
-      console.warn("[seo] json-ld inject failed:", e);
-    }
-  }
+export function productPath(product) {
+  return `/product/${encodeURIComponent(String(product?.number || product?.id || "").trim())}`;
+}
 
-  const _fetch = window.fetch.bind(window);
-  window.fetch = async (input, init) => {
-    const res = await _fetch(input, init);
-    try {
-      const url = typeof input === "string" ? input : input.url;
-      const method = (init && init.method ? init.method : "GET").toUpperCase();
-      if (!injected && url && url.includes("/api/products") && method === "GET") {
-        const clone = res.clone();
-        clone.json().then((data) => {
-          if (Array.isArray(data)) injectJsonLd(data);
-        }).catch(() => {});
-      }
-    } catch (e) {}
-    return res;
-  };
-})();
+export function applyProductSeo(product) {
+  if (!product) return resetSeo();
+  const number = String(product.number || "").trim();
+  const brand = String(product.manufacturer || "Diesel Hub").trim();
+  const related = [product.oem, ...(Array.isArray(product.cross) ? product.cross : [])].filter(Boolean);
+  const title = `${product.type || "Форсунка"} ${brand} ${number} — купити в Україні | Diesel Hub`;
+  const description = `${product.type || "Форсунка"} ${brand} ${number}. ${product.condition || ""}. OEM та крос-номери: ${related.slice(0, 6).join(", ") || "у картці товару"}. Гарантія 6 місяців, доставка по Україні.`.slice(0, 300);
+  const canonical = `${SITE_URL}${productPath(product)}`;
+  document.title = title;
+  setMeta('meta[name="description"]', ["name", "description"], description);
+  setMeta('meta[property="og:title"]', ["property", "og:title"], title);
+  setMeta('meta[property="og:description"]', ["property", "og:description"], description);
+  setMeta('meta[property="og:url"]', ["property", "og:url"], canonical);
+  setCanonical(canonical);
+  document.head.querySelector('#product-jsonld')?.remove();
+  const script = document.createElement("script");
+  script.id = "product-jsonld"; script.type = "application/ld+json";
+  script.textContent = JSON.stringify({ "@context": "https://schema.org", "@type": "Product", name: `${brand} ${number}`, sku: number, mpn: product.oem || number, brand: { "@type": "Brand", name: brand }, image: product.images || [], description, additionalProperty: related.map(value => ({ "@type": "PropertyValue", name: "Крос-номер / OEM", value })), offers: { "@type": "Offer", url: canonical, priceCurrency: "UAH", price: Number(product.price || 0), availability: Number(product.qty || 0) > 0 ? "https://schema.org/InStock" : "https://schema.org/PreOrder" } });
+  document.head.appendChild(script);
+}
+
+export function resetSeo() {
+  document.title = DEFAULT_TITLE;
+  setMeta('meta[name="description"]', ["name", "description"], DEFAULT_DESCRIPTION);
+  setCanonical(`${SITE_URL}/`);
+  document.head.querySelector('#product-jsonld')?.remove();
+}

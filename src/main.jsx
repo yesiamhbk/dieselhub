@@ -19,6 +19,11 @@ const root = createRoot(document.getElementById("root"));
 function renderByHash() {
   const hash = window.location.hash || "#/";
 
+  if (/^\/product\/[^/]+\/?$/.test(window.location.pathname)) {
+    root.render(<App />);
+    return;
+  }
+
   switch (hash) {
     case "#/":
     case "#":
@@ -62,7 +67,7 @@ function renderByHash() {
 window.addEventListener("hashchange", renderByHash);
 
 // первый рендер
-if (!window.location.hash) {
+if (!window.location.hash && !/^\/product\/[^/]+\/?$/.test(window.location.pathname)) {
   window.location.hash = "#/";
 }
 renderByHash();

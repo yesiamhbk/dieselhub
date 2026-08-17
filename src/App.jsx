@@ -1,8 +1,36 @@
 // src/App.jsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { captureAttribution, trackEvent, trackSearch } from "./analytics.js";
+import { applyProductSeo, productPath, resetSeo } from "./seo.js";
 
 /** БАЗОВЫЙ URL API (пусто в dev, на проде через VITE_API_BASE) */
 const API = import.meta.env.VITE_API_BASE || "";
+const KROP_SITE_URL = "https://www.kropdieselhub.com/";
+const LEGACY_COPPER_WASHER_ID = "cart-addon-copper-washer";
+const COPPER_WASHER_PREFIX = "cart-addon-copper-washer:";
+const COPPER_WASHER_PRODUCT = Object.freeze({
+  oem: "",
+  manufacturer: "Diesel Hub",
+  condition: "Нове",
+  type: "Комплектуючі",
+  availability: "В наявності",
+  price: 100,
+  images: [],
+  qty: 9999,
+  isCartAddon: true,
+});
+
+function copperWasherIdFor(productId) {
+  return `${COPPER_WASHER_PREFIX}${productId}`;
+}
+
+function isCopperWasherId(id) {
+  return String(id || "").startsWith(COPPER_WASHER_PREFIX);
+}
+
+function copperWasherParentId(id) {
+  return isCopperWasherId(id) ? String(id).slice(COPPER_WASHER_PREFIX.length) : "";
+}
 
 /* ===================== Утиліти ===================== */
 
@@ -12,6 +40,7 @@ function classNames(...c) {
 const hasImages = (arr) => Array.isArray(arr) && arr.length > 0;
 
 function getProductStockById(products, id) {
+  if (isCopperWasherId(id)) return COPPER_WASHER_PRODUCT.qty;
   const p = products.find((pp) => pp.id === id);
   const n = Number(p?.qty);
   return Number.isFinite(n) ? Math.max(0, n) : 0;
@@ -35,6 +64,10 @@ function getTypeGroup(type) {
 const CONDITIONS = ["Нове", "Відновлене"];
 const AVAILABILITIES = ["В наявності", "Під замовлення"];
 
+function normalizePartNumber(value) {
+  return String(value || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+
 // Ефективна наявність з урахуванням кількості
 function effectiveAvailability(p) {
   const raw = (p && typeof p.availability === "string") ? p.availability : "";
@@ -44,28 +77,40 @@ function effectiveAvailability(p) {
   return (raw === "В наявності" && qty > 0) ? "В наявності" : "Під замовлення";
 }
 
-
-function ExpandableList({ items = [], max = 3 }) {
+function ProductCrosses({ items = [], highlight = "" }) {
   const [open, setOpen] = useState(false);
-  if (!items || items.length === 0) return <span className="text-neutral-400 text-left">—</span>;
-  const shown = open ? items : items.slice(0, max);
-  const hidden = Math.max(0, items.length - max);
+  const values = Array.isArray(items) ? items.filter(Boolean) : [];
+  const normalizedHighlight = normalizePartNumber(highlight);
+  const matched = normalizedHighlight
+    ? values.find((value) => normalizePartNumber(value) === normalizedHighlight)
+    : null;
+  const ordered = matched ? [matched, ...values.filter((value) => value !== matched)] : values;
+  const visible = open ? ordered : ordered.slice(0, 1);
+  const hidden = Math.max(0, values.length - 1);
+
   return (
-    <span>
-      <span className="text-neutral-100 text-left">{shown.join(", ")}</span>
-      {hidden > 0 && (
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            setOpen(!open);
-          }}
-          className="ml-1 text-xs text-yellow-400 hover:underline align-baseline"
-          aria-label={open ? "Згорнути" : `Показати ще ${hidden}`}
-        >
-          {open ? "▴ згорнути" : `▾ ще ${hidden}`}
-        </button>
-      )}
-    </span>
+    <div className={classNames("product-crosses", open && "expanded")}>
+      <dt>Крос-номери</dt>
+      <dd>
+        <span className="product-cross-values" title={values.join(", ")}>
+          {visible.length > 0 ? visible.map((value) => (
+            <span key={value} className={value === matched ? "matched" : ""}>{value}</span>
+          )) : <span>—</span>}
+        </span>
+        {hidden > 0 && (
+          <button
+            type="button"
+            className="product-cross-more"
+            aria-expanded={open}
+            aria-label={open ? "Згорнути крос-номери" : `Показати ще ${hidden} крос-номерів`}
+            onClick={(event) => {
+              event.stopPropagation();
+              setOpen((value) => !value);
+            }}
+          >{open ? "↑" : `↓ +${hidden}`}</button>
+        )}
+      </dd>
+    </div>
   );
 }
 
@@ -75,6 +120,22 @@ function getWarranty() {
 function formatEngine(v) {
   const n = Number(v);
   return Number.isFinite(n) ? `${n.toFixed(1)} л` : "—";
+}
+
+export function getPaginationItems(totalPages, currentPage) {
+  if (totalPages <= 9) {
+    return Array.from({ length: totalPages }, (_, index) => index + 1);
+  }
+
+  if (currentPage <= 4) {
+    return [1, 2, 3, 4, "…", totalPages - 2, totalPages - 1, totalPages];
+  }
+
+  if (currentPage >= totalPages - 3) {
+    return [1, 2, 3, "…", totalPages - 3, totalPages - 2, totalPages - 1, totalPages];
+  }
+
+  return [1, 2, "…", currentPage - 1, currentPage, currentPage + 1, "…", totalPages - 1, totalPages];
 }
 
 /* ====== Телефон UA: маска + акуратне редагування ====== */
@@ -120,12 +181,25 @@ export default function App() {
   // Header height compensation (black band under fixed header)
   const headerRef = useRef(null);
   const [headerHeight, setHeaderHeight] = useState(0);
+  const heroSearchRef = useRef(null);
+  const [persistentSearchVisible, setPersistentSearchVisible] = useState(false);
   useEffect(() => {
     const update = () => setHeaderHeight(headerRef.current ? headerRef.current.offsetHeight : 0);
     update();
     window.addEventListener('resize', update);
     return () => window.removeEventListener('resize', update);
   }, []);
+
+  useEffect(() => {
+    const search = heroSearchRef.current;
+    if (!search || typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver(
+      ([entry]) => setPersistentSearchVisible(!entry.isIntersecting),
+      { threshold: 0.15, rootMargin: `-${headerHeight}px 0px 0px 0px` }
+    );
+    observer.observe(search);
+    return () => observer.disconnect();
+  }, [headerHeight]);
 
   // Cleanup accidental stray text nodes like ")}" that could appear at the very bottom
   useEffect(() => {
@@ -142,6 +216,7 @@ export default function App() {
 
   /* ----------- Пошук/фільтри ----------- */
   const [query, setQuery] = useState("");
+  useEffect(() => { captureAttribution(); trackEvent("visit"); }, []);
   const [filters, setFilters] = useState({
     brand: new Set(),
     condition: new Set(),
@@ -157,18 +232,38 @@ export default function App() {
   
   // Мобільний тумблер для додаткових фільтрів
   const [moreFiltersOpen, setMoreFiltersOpen] = useState(false);
+  const catalogRef = useRef(null);
 /* ----------- Дані товарів ----------- */
   const [products, setProducts] = useState([]);
+  const [productsLoading, setProductsLoading] = useState(true);
+  const [usingDemoCatalog, setUsingDemoCatalog] = useState(false);
   useEffect(() => {
     let cancelled = false;
-    fetch(`${API}/api/products`)
-      .then((r) => (r.ok ? r.json() : []))
-      .then((d) => {
-        if (!cancelled) setProducts(Array.isArray(d) ? d : []);
-      })
-      .catch(() => {
-        if (!cancelled) setProducts([]);
-      });
+    const load = async () => {
+      try {
+        const response = await fetch(`${API}/api/products`);
+        const data = response.ok ? await response.json() : [];
+        if (Array.isArray(data) && data.length) {
+          if (!cancelled) setProducts(data);
+          return;
+        }
+      } catch {}
+
+      if (import.meta.env.DEV) {
+        try {
+          const demoResponse = await fetch('/__demo/products.json');
+          const demo = demoResponse.ok ? await demoResponse.json() : [];
+          if (!cancelled && Array.isArray(demo)) {
+            setProducts(demo);
+            setUsingDemoCatalog(true);
+          }
+        } catch {}
+      }
+    };
+
+    load().finally(() => {
+      if (!cancelled) setProductsLoading(false);
+    });
     return () => {
       cancelled = true;
     };
@@ -186,9 +281,39 @@ export default function App() {
     [products]
   );
 
+  const activeFilterCount = useMemo(
+    () =>
+      filters.brand.size +
+      filters.condition.size +
+      filters.type.size +
+      filters.availability.size +
+      filters.engine.size +
+      [filters.number, filters.oem, filters.cross, filters.carModel].filter(Boolean).length,
+    [filters]
+  );
+
+  function resetFilters() {
+    setFilters({
+      brand: new Set(),
+      condition: new Set(),
+      type: new Set(),
+      availability: new Set(),
+      engine: new Set(),
+      number: "",
+      oem: "",
+      cross: "",
+      carModel: "",
+    });
+    setQuery("");
+  }
+
+  function focusCatalog() {
+    catalogRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const normalize = (s) => String(s || "").toUpperCase().replace(/[\s\-_.]/g, "");
+    const normalize = normalizePartNumber;
     const qn = normalize(query);
 
     const has = (str, q) => String(str || "").toLowerCase().includes(q);
@@ -233,6 +358,11 @@ export default function App() {
     });
   }, [query, filters, products]);
 
+  const queryLooksLikePartNumber = useMemo(() => {
+    const normalized = normalizePartNumber(query);
+    return normalized.length >= 5 && /\d/.test(normalized);
+  }, [query]);
+
   
   // Сортування каталогу (закріплені вгорі, потім за порядком, далі за id)
   const filteredSorted = useMemo(() => {
@@ -248,7 +378,7 @@ export default function App() {
     });
   }, [filtered]);
 /* ----------- Пагінація / Показати ще ----------- */
-  const PAGE_SIZE = 9;
+  const PAGE_SIZE = 12;
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const [page, setPage] = useState(1);
   const [mode, setMode] = useState("page");
@@ -264,36 +394,26 @@ export default function App() {
     mode === "more"
       ? filteredSorted.slice(0, visibleCount)
       : filteredSorted.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+  const paginationPage = mode === "more"
+    ? Math.min(totalPages, Math.max(1, Math.ceil(visibleCount / PAGE_SIZE)))
+    : currentPage;
   
-  const maxButtons = 7; // общее число видимых "кнопок" вместе с многоточиями и краями
-  const pagesToShow = (() => {
-    if (totalPages <= maxButtons) {
-      return Array.from({ length: totalPages }, (_, i) => i + 1);
-    }
-    const s = new Set([1, totalPages, currentPage - 1, currentPage, currentPage + 1]);
+  const pagesToShow = getPaginationItems(totalPages, paginationPage);
 
-    // Если мы в начале — показываем больше ранних страниц
-    if (currentPage <= 4) {
-      [2,3,4,5].forEach(n => s.add(n));
-    }
-    // Если мы в конце — показываем больше поздних страниц
-    if (currentPage >= totalPages - 3) {
-      [totalPages-4, totalPages-3, totalPages-2, totalPages-1].forEach(n => s.add(n));
-    }
+  const goToCatalogPage = (nextPage) => {
+    const safePage = Math.min(totalPages, Math.max(1, nextPage));
+    setMode("page");
+    setPage(safePage);
+    window.requestAnimationFrame(() => catalogRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
+  };
 
-    // Обрезаем к допустимому диапазону
-    const arr = Array.from(s).filter(n => n >= 1 && n <= totalPages).sort((a,b)=>a-b);
-
-    // Вставляем многоточия при разрывах
-    const result = [];
-    for (let i = 0; i < arr.length; i++) {
-      result.push(arr[i]);
-      if (i < arr.length - 1 && arr[i+1] - arr[i] > 1) {
-        result.push('…');
-      }
-    }
-    return result;
-  })();
+  const showMoreProducts = () => {
+    const nextCount = mode === "more"
+      ? visibleCount + PAGE_SIZE
+      : Math.max(visibleCount, currentPage * PAGE_SIZE) + PAGE_SIZE;
+    setMode("more");
+    setVisibleCount(Math.min(nextCount, filteredSorted.length));
+  };
 
   /* ----------- Кошик ----------- */
   const [cart, setCart] = useState([]); // [{id, qty}]
@@ -304,10 +424,13 @@ export default function App() {
       const raw = localStorage.getItem("cart");
       if (raw) {
         const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) setCart(parsed);
+        if (Array.isArray(parsed)) setCart(parsed.filter((item) => item?.id !== LEGACY_COPPER_WASHER_ID));
       }
     } catch {}
   }, []);
+  useEffect(() => {
+    if (usingDemoCatalog) setCart([]);
+  }, [usingDemoCatalog]);
   useEffect(() => {
     try { localStorage.setItem("cart", JSON.stringify(cart)); } catch {}
   }, [cart]);
@@ -315,13 +438,33 @@ export default function App() {
   const cartCount = cart.reduce((s, i) => s + Math.max(0, i.qty), 0);
 
   const cartItems = cart.map((ci) => {
+    if (isCopperWasherId(ci.id)) {
+      const parentProductId = ci.parentProductId || copperWasherParentId(ci.id);
+      const parentProduct = products.find((product) => String(product.id) === String(parentProductId));
+      const linkedProductNumber = ci.linkedProductNumber || parentProduct?.number || "форсунки";
+      return {
+        ...COPPER_WASHER_PRODUCT,
+        id: ci.id,
+        number: `Мідна шайба до форсунки ${linkedProductNumber}`,
+        qty: ci.qty,
+        parentProductId,
+        linkedProductNumber,
+      };
+    }
     const p = products.find((pp) => pp.id === ci.id);
     if (!p) return { id: ci.id, number: "Товар", oem: "", price: 0, qty: ci.qty, images: [] };
     return { ...p, qty: ci.qty };
   });
+  const primaryCartItems = cartItems.filter((item) => !item.isCartAddon);
+  const washersByParentId = new Map(
+    cartItems
+      .filter((item) => item.isCartAddon)
+      .map((item) => [String(item.parentProductId), item])
+  );
   const cartTotal = cartItems.reduce((s, i) => s + (i.price || 0) * Math.max(0, i.qty), 0);
 
   function addToCart(p) {
+    trackEvent("add_to_cart", { product_id: p.id, product_number: p.number, quantity: 1, value: Number(p.price || 0) });
     setCart((prev) => {
       const ex = prev.find((i) => i.id === p.id);
       if (ex)
@@ -334,6 +477,7 @@ export default function App() {
   }
 
   function addToCartN(p, n) {
+    trackEvent("add_to_cart", { product_id: p.id, product_number: p.number, quantity: Math.max(1, Number(n) || 1), value: Number(p.price || 0) });
     setCart((prev) => {
       const ex = prev.find((i) => i.id === p.id);
       const stock = Math.max(0, Number(p.qty) || 0);
@@ -348,22 +492,52 @@ export default function App() {
     setCartOpen(true);
   }
 
+  function addCopperWasherForInjector(injector) {
+    const washerId = copperWasherIdFor(injector.id);
+    const suggestedQuantity = Math.max(1, Number(injector.qty) || 0);
+    setCart((prev) => {
+      const existing = prev.find((item) => item.id === washerId);
+      if (existing) {
+        return prev.map((item) => item.id === washerId
+          ? { ...item, qty: Math.max(1, Number(item.qty) || 0) + suggestedQuantity }
+          : item);
+      }
+
+      const next = [...prev];
+      const injectorIndex = next.findIndex((cartItem) => cartItem.id === injector.id);
+      next.splice(injectorIndex >= 0 ? injectorIndex + 1 : next.length, 0, {
+        id: washerId,
+        qty: suggestedQuantity,
+        parentProductId: injector.id,
+        linkedProductNumber: injector.number,
+      });
+      return next;
+    });
+  }
+
   function updateQty(id, val) {
     let v = String(val);
-    if (v === "") {
-      setCart((prev) => prev.map((i) => (i.id === id ? { ...i, qty: 0 } : i)));
-      return;
-    }
     let n = parseInt(v, 10);
     if (Number.isNaN(n)) n = 0;
     if (v.length > 1 && v.startsWith("0")) n = parseInt(v.replace(/^0+/, ""), 10) || 0;
     n = Math.max(0, n);
     const stock = getProductStockById(products, id);
     if (stock && n > stock) n = stock;
-    setCart((prev) => prev.map((i) => (i.id === id ? { ...i, qty: n } : i)));
+    setCart((prev) => {
+      const currentQty = Number(prev.find((item) => item.id === id)?.qty) || 0;
+      return prev.map((item) => {
+        if (item.id === id) return { ...item, qty: n };
+        if (String(item.parentProductId || copperWasherParentId(item.id)) === String(id) && Number(item.qty) === currentQty) {
+          return { ...item, qty: n };
+        }
+        return item;
+      });
+    });
   }
   function removeFromCart(id) {
-    setCart((prev) => prev.filter((i) => i.id !== id));
+    setCart((prev) => prev.filter((item) => (
+      item.id !== id && String(item.parentProductId || copperWasherParentId(item.id)) !== String(id)
+    )));
   }
 
   /* ----------- Товар / Модалка ----------- */
@@ -390,6 +564,15 @@ export default function App() {
       pp.compat_for.some((x) => compatKeys.has(String(x).trim().toUpperCase()))
     );
   }, [products, productOpen, compatKeys]);
+
+  const modalProductInCart = productOpen
+    ? Math.max(0, Number(cart.find((item) => item.id === productOpen.id)?.qty) || 0)
+    : 0;
+  const modalProductStock = productOpen ? Math.max(0, Number(productOpen.qty) || 0) : 0;
+  const modalMaxAdd = productOpen
+    ? (modalProductStock === 0 ? 99 : Math.max(0, modalProductStock - modalProductInCart))
+    : 0;
+  const modalSelectedQty = Math.max(1, parseInt(modalQtyStr || "1", 10) || 1);
 
   /* ----------- Нещодавно переглянуті ----------- */
   const [recent, setRecent] = useState([]);
@@ -426,44 +609,34 @@ export default function App() {
     setActiveImg(0);
     setModalQtyStr("1");
     try {
-      const url = new URL(window.location.href);
-      if (url.searchParams.get("p") !== String(p.id)) {
-        url.searchParams.set("p", String(p.id));
-        window.history.pushState({ p: String(p.id) }, "", url.toString());
-      }
+      const path = productPath(p);
+      if (window.location.pathname !== path) window.history.pushState({ productNumber: p.number }, "", path);
     } catch {}
+    applyProductSeo(p);
+    trackEvent("product_view", { product_id: p.id, product_number: p.number });
   }
 
   function closeProduct() {
     try {
-      const url = new URL(window.location.href);
-      const hadParam = url.searchParams.has("p");
       setProductOpen(null);
-      if (hadParam) {
-        if (startedWithParamRef.current) {
-          url.searchParams.delete("p");
-          const qs = url.searchParams.toString();
-          const clean = url.pathname + (qs ? "?" + qs : "") + url.hash;
-          window.history.replaceState({}, "", clean);
-          startedWithParamRef.current = false;
-        } else {
-          window.history.back();
-        }
-      }
+      resetSeo();
+      if (window.location.pathname.startsWith("/product/")) window.history.pushState({}, "", "/");
     } catch {}
   }
 
   useEffect(() => {
     try {
-      const url = new URL(window.location.href);
-      startedWithParamRef.current = url.searchParams.has("p");
-      const pid = url.searchParams.get("p");
-      if (pid && Array.isArray(products) && products.length) {
-        const found = products.find((pp) => String(pp.id) === String(pid));
+      const legacyId = new URL(window.location.href).searchParams.get("p");
+      const routeNumber = decodeURIComponent(window.location.pathname.match(/^\/product\/([^/]+)\/?$/)?.[1] || "");
+      if ((legacyId || routeNumber) && Array.isArray(products) && products.length) {
+        const key = normalizePartNumber(routeNumber);
+        const found = products.find((pp) => legacyId ? String(pp.id) === String(legacyId) : [pp.number, pp.oem, ...(pp.cross || [])].some(value => normalizePartNumber(value) === key));
         if (found) {
           setProductOpen(found);
           setActiveImg(0);
           setModalQtyStr("1");
+          applyProductSeo(found);
+          if (window.location.pathname !== productPath(found)) window.history.replaceState({ productNumber: found.number }, "", productPath(found));
         }
       }
     } catch {}
@@ -472,19 +645,21 @@ export default function App() {
   useEffect(() => {
     const onPop = () => {
       try {
-        const url = new URL(window.location.href);
-        const pid = url.searchParams.get("p");
-        if (pid) {
-          const found = products.find((pp) => String(pp.id) === String(pid));
+        const routeNumber = decodeURIComponent(window.location.pathname.match(/^\/product\/([^/]+)\/?$/)?.[1] || "");
+        if (routeNumber) {
+          const key = normalizePartNumber(routeNumber);
+          const found = products.find((pp) => [pp.number, pp.oem, ...(pp.cross || [])].some(value => normalizePartNumber(value) === key));
           if (found) {
             setProductOpen(found);
             pushRecent(found.id);
             setActiveImg(0);
             setModalQtyStr("1");
+            applyProductSeo(found);
             return;
           }
         }
         setProductOpen(null);
+        resetSeo();
       } catch {}
     };
     window.addEventListener("popstate", onPop);
@@ -624,6 +799,7 @@ export default function App() {
       name: order.name.trim(),
       phone: `+380${order.phone}`,
       delivery,
+      payment: order.payment || (order.delivery === "Нова пошта" ? "Передплата по реквізитам" : "Готівковий розрахунок"),
       items: cartItems
         .filter((i) => i.qty > 0)
         .map((i) => ({
@@ -637,6 +813,7 @@ export default function App() {
           price: i.price,
         })),
       total: cartTotal,
+      attribution: captureAttribution(),
     };
 
     try {
@@ -647,6 +824,7 @@ export default function App() {
       });
       if (!r.ok) throw new Error("Помилка запиту");
       setOrderPlaced(true);
+      trackEvent("order", { value: cartTotal, item_count: cartItems.length });
       setCart([]);
     } catch {
       alert("Не вдалося відправити замовлення. Спробуйте ще раз.");
@@ -663,651 +841,475 @@ export default function App() {
     setNpWhList([]);
     setOrderPlaced(false);
     setCheckoutOpen(true);
+    trackEvent("checkout_start", { value: cartTotal, item_count: cartItems.length });
   }
 
   /* ===================== UI ===================== */
   return (
-    <div className="min-h-screen bg-neutral-950 text-neutral-100">
-      {/* Header */}
-      <header ref={headerRef} className="fixed top-0 inset-x-0 z-50 bg-neutral-950/60 backdrop-blur-md border-b border-neutral-800">
-        <div className="mx-auto max-w-7xl px-4 py-3 flex items-center gap-5">
-          <div className="flex flex-wrap items-center gap-2">
-            <img src="/dh-logo.png" alt="Diesel Hub" className="h-8 w-8 object-contain" />
-            <div className="font-bold tracking-tight">Diesel Hub</div>
-          </div>
-
-          <div className="flex-1">
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Пошук за номером, OEM, кросс-номерами, брендом..."
-              className="w-full rounded-xl bg-neutral-900 border border-neutral-800 px-4 py-2 outline-none focus:border-yellow-400"
-            />
-          </div>
-
-          {/* Кнопки в шапке — фирменный жёлтый */}
-          
-
-
-          <div className="ml-auto">
-            <button
-              onClick={() => setCartOpen((v) => !v)}
-              className="relative rounded-xl border border-neutral-700 px-3 py-2 hover:border-yellow-400"
-            >
-              Кошик
-              {cartCount > 0 && (
-                <span className="absolute -top-2 -right-2 text-xs bg-yellow-400 text-neutral-900 rounded-full px-2 py-0.5 font-semibold">
-                  {cartCount}
-                </span>
-              )}
-            </button>
+    <div className="brand-shell min-h-screen text-neutral-100">
+      <header ref={headerRef} className="modern-header fixed top-0 inset-x-0 z-50">
+        <div className="modern-nav">
+          <div className="mx-auto max-w-7xl px-4 md:px-5 flex h-16 items-center gap-5">
+            <a href="#/" className="flex shrink-0 items-center gap-2.5" aria-label="Diesel Hub — головна">
+              <img src="/dh-logo-brand.png" alt="" className="brand-logo h-10 w-10 object-contain" />
+              <div className="brand-wordmark font-extrabold tracking-tight">Diesel Hub</div>
+            </a>
+            <nav className="modern-links hidden lg:flex items-center gap-6 ml-5" aria-label="Основна навігація">
+              <button type="button" onClick={focusCatalog}>Каталог</button>
+              <a href="#/warranty">Гарантія</a>
+              <a href="#/trade-in">Trade-in</a>
+              <a href="#/partners-sto">Для СТО</a>
+            </nav>
+            <div className="ml-auto flex items-center gap-2 md:gap-3">
+              <a href="tel:+380665507055" className="modern-phone-number hidden md:inline-flex">066 550 70 55</a>
+              <a href="tel:+380665507055" className="modern-phone hidden sm:inline-flex">Допомога з підбором</a>
+              <button
+                onClick={() => setCartOpen((value) => !value)}
+                className="modern-cart relative"
+              >
+                <span>Кошик</span>
+                {cartCount > 0 && <b>{cartCount}</b>}
+              </button>
+            </div>
           </div>
         </div>
       </header>
 
-      {/* Spacer under header so it doesn't overlap content */}
-      <div aria-hidden style={{height: headerHeight}} />
+      <div aria-hidden style={{ height: headerHeight }} />
 
-      {/* Hero / Плашка */}
-      <section className="border-b border-neutral-800">
-        <div className="mx-auto max-w-7xl px-4 py-8 md:py-10 grid md:grid-cols-2 gap-6 items-center relative">
+      <form
+        className={classNames("persistent-search", persistentSearchVisible && "visible")}
+        style={{ top: Math.max(0, headerHeight - 1) }}
+        onSubmit={(event) => {
+          event.preventDefault();
+          trackSearch(query, filteredSorted.length);
+          focusCatalog();
+        }}
+      >
+        <div className="mx-auto max-w-7xl px-4 md:px-5">
+          <div className="persistent-search-inner">
+            <span aria-hidden>⌕</span>
+            <input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Номер, OEM або крос-номер"
+              aria-label="Закріплений пошук у каталозі"
+            />
+            <button type="submit">Знайти</button>
+          </div>
+        </div>
+      </form>
+
+      <section className="modern-hero">
+        <div className="mx-auto max-w-7xl px-4 md:px-5 py-12 md:py-16 grid lg:grid-cols-[minmax(0,1.08fr)_minmax(360px,.72fr)] gap-12 items-center relative z-10">
           <div>
-            {/* Мобильные CTA — обе жёлтые */}
-            <div className="hidden md:hidden">
-              <a
-                href="#/trade-in"
-                className="rounded-2xl border border-yellow-500/60 bg-yellow-400 text-neutral-900 px-4 py-2 text-base font-semibold hover:brightness-95 whitespace-nowrap"
-              >
-                Обмін
-              </a>
-              <a
-                href="https://kropdieselhub.com"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="rounded-2xl border border-yellow-500/60 bg-yellow-400 text-neutral-900 px-4 py-2 text-base font-semibold hover:brightness-95 whitespace-nowrap"
-              >
-                Наше СТО
-              </a>
+            <div className="modern-kicker">DIESEL HUB</div>
+            <h1>
+              Форсунки та ПНВТ від{" "}
+              <a className="krop-site-link" href={KROP_SITE_URL} target="_blank" rel="noreferrer">Krop Diesel Hub</a>
+            </h1>
+            <div className="hero-promise" aria-label="Нові та реставровані деталі з гарантією">
+              <span>Нові</span>
+              <span>Реставровані</span>
+              <span>З гарантією</span>
             </div>
 
-            <h1 className="text-3xl md:text-4xl font-extrabold leading-tight md:whitespace-nowrap">
-  <span className="inline md:hidden">Форсунки та ПНВТ Common Rail</span>
-  <span className="hidden md:inline">Форсунки та ПНВТ Common Rail від Diesel Hub</span>
-  <span className="block text-yellow-400">в наявності, перевірені та з гарантією</span>
-</h1>
-            <p className="mt-3 text-neutral-300">
-              Швидкий пошук за OEM і кросс-номерами. Чесний стан: нове / відновлене. Відправка по
-              Україні.
-            </p>
+            <div className="hero-actions hero-actions-compact">
+              <a href="tel:+380665507055" className="hero-primary">Підібрати з консультантом</a>
+              <a href="#/trade-in" className="hero-secondary hero-secondary-button">Обміняти старі запчастини <span>→</span></a>
+            </div>
+
+            <form
+              ref={heroSearchRef}
+              className="hero-search"
+              onSubmit={(event) => {
+                event.preventDefault();
+                trackSearch(query, filteredSorted.length);
+                focusCatalog();
+              }}
+            >
+              <span aria-hidden>⌕</span>
+              <input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Введіть номер деталі, OEM або виробника"
+                aria-label="Пошук у каталозі"
+              />
+              <button type="submit">Знайти деталь</button>
+            </form>
           </div>
-          <div className="md:justify-self-end md:self-center">
-            <div className="rounded-2xl border border-neutral-800 bg-gradient-to-br from-neutral-900 to-neutral-950 p-4">
-              <ul className="text-base text-white leading-tight space-y-1 list-disc pl-5">
-  <li>
-    <a href="tel:+380665507055" className="text-[#ffd200] hover:underline">066 550 70 55</a> <span className="text-white">Консультація</span>
-  </li>
-  <li>
-    <a href="#/warranty" className="text-white hover:underline">Ознайомитися з умовами гарантії</a>
-  </li>
-  <li>
-    <a href="#/trade-in" className="text-white hover:underline">Обміняти свої деталі</a>
-  </li>
-  <li>
-    <a href="#/partners-sto" className="text-white hover:underline">Партнерство для СТО</a>
-  </li>
-  <li>
-    <a href="https://kropdieselhub.com" target="_blank" rel="noopener noreferrer" className="text-white hover:underline">Наше СТО</a>
-  </li>
-</ul>
+
+          <div className="hero-visual" aria-label="Переваги Diesel Hub">
+            <div className="hero-logo-orbit">
+              <img src="/dh-logo2-brand.png" alt="Форсунки та ПНВТ Diesel Hub" />
+            </div>
+            <div className="hero-proof-panel">
+              <small>
+                Стандарт{" "}
+                <a className="krop-site-link" href={KROP_SITE_URL} target="_blank" rel="noreferrer">Krop Diesel Hub</a>
+              </small>
+              <div className="hero-proof-values">
+                <span><strong>200+</strong><em>позицій у каталозі</em></span>
+                <span className="hero-proof-warranty"><strong>6 місяців</strong><em>гарантії</em></span>
+                <span><strong>Перевірено</strong><em>перед відправкою</em></span>
+              </div>
             </div>
           </div>
         </div>
       </section>
 
-      {/* Main */}
-      <main className="mx-auto max-w-7xl px-4 py-8 grid grid-cols-1 md:grid-cols-12 gap-8">
-        {/* Sidebar Filters */}
-        <aside className="md:col-span-3"><div className="space-y-6 md:sticky md:top-0 md:min-h-screen md:flex md:flex-col md:justify-end">
-          <div className="text-xs uppercase tracking-wide text-neutral-400">Фільтр</div>
-
-          {/* Поля пошуку */}
-          <div className="rounded-2xl border border-neutral-800 p-4 space-y-3">
-            <label className="block">
-              <div className="text-sm mb-1">Номер деталі</div>
-              <input
-                value={filters.number}
-                onChange={(e) => setFilters((f) => ({ ...f, number: e.target.value }))}
-                className="w-full rounded-lg bg-neutral-900 border border-neutral-800 px-3 py-2 text-sm outline-none focus:border-yellow-400"
-              />
-            </label>
-            <label className="block">
-              <div className="text-sm mb-1">OEM номер</div>
-              <input
-                value={filters.oem}
-                onChange={(e) => setFilters((f) => ({ ...f, oem: e.target.value }))}
-                className="w-full rounded-lg bg-neutral-900 border border-neutral-800 px-3 py-2 text-sm outline-none focus:border-yellow-400"
-              />
-            </label>
-            <label className="block">
-              <div className="text-sm mb-1">Кросс-номери</div>
-              <input
-                value={filters.cross}
-                onChange={(e) => setFilters((f) => ({ ...f, cross: e.target.value }))}
-                className="w-full rounded-lg bg-neutral-900 border border-neutral-800 px-3 py-2 text-sm outline-none focus:border-yellow-400"
-              />
-            </label>
-          </div>
-          {/* Більше/Менше фільтрів — тільки мобільна версія */}
-          <button
-            type="button"
-            className="md:hidden w-full rounded-xl border border-neutral-800 bg-neutral-900/60 px-4 py-2 text-sm text-neutral-200 hover:border-neutral-700 mb-3"
-            onClick={() => setMoreFiltersOpen(v => !v)}
-          >
-            {moreFiltersOpen ? "Менше фільтрів" : "Більше фільтрів"}
-          </button>
-
-
-          
-          {/* Додаткові фільтри (сховані на моб.) */}
-          <div className={classNames("md:block", moreFiltersOpen ? "block" : "hidden")}>
-{/* Тип */}
-          <div className="rounded-2xl border border-neutral-800 p-4">
-            <div className="font-semibold mb-2">Тип</div>
-            <div className="flex flex-wrap gap-2">
-              {TYPE_GROUPS.map((g) => (
-                <button
-                  key={g.id}
-                  onClick={() =>
-                    setFilters((f) => ({
-                      ...f,
-                      type: toggleSet(f.type, g.id),
-                    }))
-                  }
-                  className={classNames(
-                    "px-3 py-1 rounded-full border text-sm",
-                    filters.type.has(g.id)
-                      ? "border-yellow-400 text-yellow-400"
-                      : "border-neutral-800 text-neutral-300 hover:border-neutral-600"
-                  )}
-                >
-                  {g.label}
-                </button>
-              ))}
+      <section ref={catalogRef} className="catalog-shell scroll-mt-32">
+        <div className="mx-auto max-w-7xl px-4 md:px-5 py-7 md:py-10">
+          <div className="catalog-toolbar catalog-toolbar-first">
+            <div className="catalog-results">
+              <h2>Каталог</h2>
+              <span className="catalog-count"><b>{filtered.length}</b> {filtered.length === 1 ? "товар знайдено" : "товарів знайдено"}</span>
+              {usingDemoCatalog && <em>Локальне демо</em>}
             </div>
-          </div>
-
-          {/* Наявність */}
-          <div className="rounded-2xl border border-neutral-800 p-4">
-            <div className="font-semibold mb-2">Наявність</div>
-            <div className="flex flex-wrap gap-2">
-              {AVAILABILITIES.map((a) => (
-                <button
-                  key={a}
-                  onClick={() =>
-                    setFilters((f) => ({
-                      ...f,
-                      availability: toggleSet(f.availability, a),
-                    }))
-                  }
-                  className={classNames(
-                    "px-3 py-1 rounded-full border text-sm",
-                    filters.availability.has(a)
-                      ? "border-yellow-400 text-yellow-400"
-                      : "border-neutral-800 text-neutral-300 hover:border-neutral-600"
-                  )}
-                >
-                  {a}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Виробник */}
-          <div className="rounded-2xl border border-neutral-800 p-4">
-            <div className="font-semibold mb-2">Виробник</div>
-            <div className="flex flex-wrap gap-2">
-              {brands.map((b) => (
-                <button
-                  key={b}
-                  onClick={() => setFilters((f) => ({ ...f, brand: toggleSet(f.brand, b) }))}
-                  className={classNames(
-                    "px-3 py-1 rounded-full border text-sm",
-                    filters.brand.has(b)
-                      ? "border-yellow-400 text-yellow-400"
-                      : "border-neutral-800 text-neutral-300 hover:border-neutral-600"
-                  )}
-                >
-                  {b}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Стан */}
-          <div className="rounded-2xl border border-neutral-800 p-4">
-            <div className="font-semibold mb-2">Стан</div>
-            <div className="flex flex-wrap gap-2">
-              {CONDITIONS.map((c) => (
-                <button
-                  key={c}
-                  onClick={() =>
-                    setFilters((f) => ({
-                      ...f,
-                      condition: toggleSet(f.condition, c),
-                    }))
-                  }
-                  className={classNames(
-                    "px-3 py-1 rounded-full border text-sm",
-                    filters.condition.has(c)
-                      ? "border-yellow-400 text-yellow-400"
-                      : "border-neutral-800 text-neutral-300 hover:border-neutral-600"
-                  )}
-                >
-                  {c}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Обʼєм двигуна */}
-          <div className="rounded-2xl border border-neutral-800 p-4">
-            <div className="font-semibold mb-2">Об'єм двигуна (л)</div>
-            <div className="flex flex-wrap gap-2">
-              {liters.map((l) => (
-                <button
-                  key={l}
-                  onClick={() => setFilters((f) => ({ ...f, engine: toggleSet(f.engine, l) }))}
-                  className={classNames(
-                    "px-3 py-1 rounded-full border text-sm",
-                    filters.engine.has(l)
-                      ? "border-yellow-400 text-yellow-400"
-                      : "border-neutral-800 text-neutral-300 hover:border-neutral-600"
-                  )}
-                >
-                  {Number(l).toFixed(1)}
-                </button>
-              ))}
-            </div>
-          </div>
-        
-          </div>
-</div></aside>
-
-        {/* Products */}
-        <section className="md:col-span-9">
-          <div className="flex items-center justify-between mb-4">
-            <div className="text-sm text-neutral-400">
-              Знайдено: <span className="text-neutral-200 font-semibold">{filtered.length}</span>
-            </div>
-          </div>
-
-          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
-            {shown.map((p) => (
-              <article
-                key={p.id}
-                onClick={() => openProduct(p)}
-                className="group rounded-2xl border border-neutral-800 overflow-hidden bg-neutral-900 cursor-pointer flex flex-col hover:border-yellow-400/70 transition-colors"
-              >
-                <div className="aspect-video bg-neutral-800 grid place-items-center text-neutral-400 overflow-hidden">
-                  {hasImages(p.images) ? (
-                    <img src={p.images[0]} alt="" className="w-full h-full object-cover" loading="lazy" />
-                  ) : (
-                    "Фото"
-                  )}
-                </div>
-                <div className="p-4 space-y-2 flex-1 flex flex-col">
-                  <div className="flex items-center justify-between">
-                    <h3 className="font-semibold tracking-tight">{p.number}</h3>
-                    {effectiveAvailability(p) === "В наявності" ? (
-                      <span className="text-xs px-2 py-1 rounded-full border border-emerald-400 text-emerald-400">
-                        В наявності · {p.qty} шт
-                      </span>
-                    ) : (
-                      <span className="text-xs px-2 py-1 rounded-full border border-yellow-400 text-yellow-400">
-                        Під замовлення
-                      </span>
-                    )}
-                  </div>
-                  <div className="text-sm text-neutral-300">
-                    OEM Номер: <span className="text-neutral-100 text-left">{p.oem || "—"}</span>
-                  </div>
-                  {(p.type === "Форсунка" || p.type === "ПНВТ") && (
-<div className="text-sm text-neutral-300">
-                    Кросс: <ExpandableList items={p.cross || []} max={2} />
-                  </div>
-)}
-                  <div className="text-sm text-neutral-300">
-                    Тип деталі: <span className="text-neutral-100 text-left">{p.type}</span>
-                  </div>
-                  {((p.type === "Форсунка" || p.type === "ПНВТ") && Number(p.engine) > 0) && (
-<div className="text-sm text-neutral-300">
-                    Об'єм: <span className="text-neutral-100 text-left">{formatEngine(p.engine)}</span>
-                  </div>
-)}
-                  <div className="text-xs text-neutral-400">
-                    {p.manufacturer} · {p.condition}
-                  </div>
-                  <div className="flex items-center justify-between mt-auto pt-2">
-                    <div className="text-lg font-bold text-yellow-400">
-                      {(p.price || 0).toLocaleString("uk-UA")} ₴
-                    </div>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        addToCart(p);
-                      }}
-                      className="rounded-xl border border-yellow-500/60 text-yellow-300 hover:text-neutral-900 hover:bg-yellow-400 px-3 py-1.5 text-sm"
-                    >
-                      Додати
-                    </button>
-                  </div>
-                </div>
-              </article>
-            ))}
-          </div>
-
-          {/* Пагінація + Показати ще */}
-          <div className="mt-6 flex flex-col items-center gap-3">
-
-            {/* Пагінація */}
-            <nav className="flex items-center gap-2">
-              <button
-                onClick={() => {
-                  setMode("page");
-                  setPage((p) => Math.max(1, p - 1));
-                }}
-                disabled={currentPage <= 1}
-                className={classNames(
-                  "px-3 py-1.5 rounded-lg border text-sm",
-                  currentPage <= 1
-                    ? "border-neutral-800 text-neutral-600 cursor-not-allowed"
-                    : "border-neutral-800 text-neutral-300 hover:border-yellow-400"
-                )}
-                aria-label="Попередня"
-                title="Попередня"
-              >
-                ‹
+            <div className="catalog-toolbar-actions">
+              {activeFilterCount > 0 && <button type="button" onClick={resetFilters}>Скинути все</button>}
+              <button type="button" className="filter-toggle" onClick={() => setMoreFiltersOpen((value) => !value)}>
+                Фільтри {activeFilterCount > 0 && <b>{activeFilterCount}</b>}
               </button>
+            </div>
+          </div>
 
-              {pagesToShow.map((p, idx) =>
-                typeof p === "number" ? (
+          <div className="catalog-layout">
+            <aside className={classNames("filter-panel", moreFiltersOpen ? "mobile-open" : "")}>
+              <div className="filter-panel-head">
+                <div><span>Фільтри</span><small>Уточніть параметри</small></div>
+                {activeFilterCount > 0 && <button type="button" onClick={resetFilters}>Очистити</button>}
+              </div>
+
+              <div className="filter-section">
+                <label className="filter-label">Номер або OEM</label>
+                <input
+                  value={filters.number}
+                  onChange={(event) => setFilters((current) => ({ ...current, number: event.target.value }))}
+                  placeholder="Наприклад, 0445..."
+                  className="filter-input"
+                />
+              </div>
+
+              <div className="filter-section">
+                <div className="filter-label">Тип деталі</div>
+                <div className="filter-options">
                   <button
-                    key={idx}
-                    onClick={() => {
-                      setMode("page");
-                      setPage(p);
-                    }}
-                    className={classNames(
-                      "min-w-9 px-3 py-1.5 rounded-lg border text-sm",
-                      currentPage === p
-                        ? "border-yellow-500/60 bg-yellow-400 text-neutral-950"
-                        : "border-neutral-800 text-neutral-300 hover:border-yellow-400"
-                    )}
-                  >
-                    {p}
-                  </button>
-                ) : (
-                  <span key={idx} className="px-2 text-neutral-600">…</span>
-                )
-              )}
-
-              <button
-                onClick={() => {
-                  setMode("page");
-                  setPage((p) => Math.min(totalPages, p + 1));
-                }}
-                disabled={currentPage >= totalPages}
-                className={classNames(
-                  "px-3 py-1.5 rounded-lg border text-sm",
-                  currentPage >= totalPages
-                    ? "border-neutral-800 text-neutral-600 cursor-not-allowed"
-                    : "border-neutral-800 text-neutral-300 hover:border-yellow-400"
-                )}
-                aria-label="Наступна"
-                title="Наступна"
-              >
-                ›
-              </button>
-            </nav>
-
-{/* Показати ще */}
-            <div className="w-full flex justify-center">
-              <button
-                onClick={() => {
-                  setMode("more");
-                  setVisibleCount((v) => Math.min(v + PAGE_SIZE, filtered.length));
-                }}
-                disabled={visibleCount >= filtered.length}
-                className={classNames(
-                  "w-full sm:w-auto max-w-full text-center rounded-xl border px-4 py-2 text-sm font-semibold",
-                  visibleCount >= filtered.length
-                    ? "border-neutral-800 text-neutral-600 cursor-not-allowed"
-                    : "border-yellow-500/60 bg-yellow-400 text-neutral-950 hover:brightness-95"
-                )}
-              >
-                Показати ще
-              </button>
-            </div>
-          </div>
-        </section>
-      </main>
-
-      {/* Product Modal */}
-      {productOpen && (
-        <div className="fixed inset-0 z-[60]">
-          <div className="absolute inset-0 bg-black/60" onClick={closeProduct} />
-          <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-4xl rounded-2xl border border-neutral-800 bg-neutral-950 p-5">
-            <div className="flex items-start gap-6 flex-col md:flex-row">
-              {/* Gallery */}
-              <div className="md:w-1/2 w-full">
-                <div className="aspect-video rounded-xl bg-neutral-900 grid place-items-center text-neutral-400 mb-3 overflow-hidden">
-                  {hasImages(productOpen.images) ? (
-                    <img
-                      src={productOpen.images[activeImg]}
-                      alt=""
-                      className="w-full h-full object-cover"
-                    />
-                  ) : (
-                    <>Фото {activeImg + 1}</>
-                  )}
-                </div>
-                <div className="grid grid-cols-4 gap-2">
-                  {(productOpen.images && productOpen.images.length
-                    ? productOpen.images
-                    : ["1", "2", "3"]
-                  ).map((img, idx) => (
+                    type="button"
+                    className={filters.type.size === 0 ? "active" : ""}
+                    onClick={() => setFilters((current) => ({ ...current, type: new Set() }))}
+                  >Усі деталі</button>
+                  {TYPE_GROUPS.map((group) => (
                     <button
-                      key={idx}
-                      onClick={() => setActiveImg(idx)}
-                      className={classNames(
-                        "h-16 rounded-lg grid place-items-center text-xs overflow-hidden",
-                        idx === activeImg
-                          ? "bg-yellow-500/20 border border-yellow-500/50"
-                          : "bg-neutral-900 border border-neutral-800 hover:border-neutral-700"
-                      )}
-                    >
-                      {hasImages(productOpen.images) ? (
-                        <img src={img} alt="" className="w-full h-full object-cover" />
-                      ) : (
-                        <>Фото {idx + 1}</>
-                      )}
-                    </button>
+                      type="button"
+                      key={group.id}
+                      className={filters.type.has(group.id) ? "active" : ""}
+                      onClick={() => setFilters((current) => ({ ...current, type: toggleSet(current.type, group.id) }))}
+                    >{group.label}</button>
                   ))}
                 </div>
               </div>
 
-              {/* Info */}
-              <div className="md:w-1/2 w-full">
-                <div className="flex items-start justify-between gap-3">
-                  <h2 className="text-xl font-bold flex items-baseline gap-3">{productOpen.number}<span className="text-sm text-neutral-400 font-normal">{productOpen.manufacturer} · {productOpen.condition}</span></h2>
-                  <button
-                    onClick={closeProduct}
-                    className="text-white hover:text-neutral-300"
-                  >
-                    Закрити
-                  </button>
+              <div className="filter-section">
+                <div className="filter-label">Наявність</div>
+                <div className="filter-options">
+                  {AVAILABILITIES.map((availability) => (
+                    <button
+                      type="button"
+                      key={availability}
+                      className={filters.availability.has(availability) ? "active" : ""}
+                      onClick={() => setFilters((current) => ({ ...current, availability: toggleSet(current.availability, availability) }))}
+                    >{availability}</button>
+                  ))}
                 </div>
-                
-                {/* Tabs */}
-                <div className="mt-2 flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setProductTab("info")}
-                    className={classNames(
-                      "px-3 py-1.5 rounded-lg border text-sm",
-                      productTab === "info"
-                        ? "border-yellow-400 text-yellow-400"
-                        : "border-neutral-800 text-neutral-300 hover:border-neutral-600"
-                    )}
-                  >
-                    Інформація
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setProductTab("parts")}
-                    className={classNames(
-                      "px-3 py-1.5 rounded-lg border text-sm",
-                      productTab === "parts"
-                        ? "border-yellow-400 text-yellow-400"
-                        : "border-neutral-800 text-neutral-300 hover:border-neutral-600"
-                    )}
-                  >
-                    Комплектуючі деталі
-                  </button>
+              </div>
+
+              <div className="filter-section">
+                <div className="filter-label">Виробник</div>
+                <div className="filter-options">
+                  {brands.map((brand) => (
+                    <button
+                      type="button"
+                      key={brand}
+                      className={filters.brand.has(brand) ? "active" : ""}
+                      onClick={() => setFilters((current) => ({ ...current, brand: toggleSet(current.brand, brand) }))}
+                    >{brand}</button>
+                  ))}
                 </div>
-                {/* Tabs content */}
-                {productTab === "info" ? (
-                  <div className="mt-3 border border-neutral-800 rounded-xl overflow-hidden">
-                  <div className="divide-y divide-neutral-800 text-sm">
-                    <div className="flex flex-wrap items-baseline gap-2 px-3 py-2">
-                      <span className="text-neutral-400 text-left">OEM Номер:</span>
-                      <span className="text-neutral-100 text-left">{productOpen.oem || "—"}</span>
+              </div>
+
+              <div className="filter-section">
+                <div className="filter-label">Стан</div>
+                <div className="filter-options">
+                  {CONDITIONS.map((condition) => (
+                    <button
+                      type="button"
+                      key={condition}
+                      className={filters.condition.has(condition) ? "active" : ""}
+                      onClick={() => setFilters((current) => ({ ...current, condition: toggleSet(current.condition, condition) }))}
+                    >{condition}</button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="filter-section">
+                <div className="filter-label">Обʼєм двигуна</div>
+                <div className="filter-options compact">
+                  {liters.map((liter) => (
+                    <button
+                      type="button"
+                      key={liter}
+                      className={filters.engine.has(liter) ? "active" : ""}
+                      onClick={() => setFilters((current) => ({ ...current, engine: toggleSet(current.engine, liter) }))}
+                    >{Number(liter).toFixed(1)} л</button>
+                  ))}
+                </div>
+              </div>
+            </aside>
+
+            <div className="products-column">
+              {productsLoading ? (
+                <div className="catalog-grid" aria-label="Завантаження товарів">
+                  {Array.from({ length: 6 }, (_, index) => <div className="product-skeleton" key={index} />)}
+                </div>
+              ) : shown.length === 0 ? (
+                queryLooksLikePartNumber ? (
+                  <div className="number-help-card">
+                    <div className="number-help-content">
+                      <div className="number-help-kicker">Не знайшли в каталозі?</div>
+                      <h3>Зателефонуйте менеджеру — він допоможе знайти деталь</h3>
+                      <p>Перевіримо OEM і крос-номери, сумісність та актуальну наявність.</p>
+                      <div className="number-help-query"><span>Номер для перевірки</span><b>{query.trim()}</b></div>
+                      <button className="number-help-reset" type="button" onClick={resetFilters}>Показати весь каталог</button>
                     </div>
-                    {(productOpen.type === "Форсунка" || productOpen.type === "ПНВТ") && (
-<div className="flex flex-wrap items-baseline gap-2 px-3 py-2">
-                      <span className="text-neutral-400 text-left">Кросс номери:</span>
-                      <span className="text-neutral-100 text-left"><ExpandableList items={productOpen.cross || []} max={2} /></span>
-                    </div>
-)}
-                    <div className="flex flex-wrap items-baseline gap-2 px-3 py-2">
-                      <span className="text-neutral-400 text-left">Тип деталі:</span>
-                      <span className="text-neutral-100 text-left">{productOpen.type}</span>
-                    </div>
-                    {((productOpen.type === "Форсунка" || productOpen.type === "ПНВТ") && Number(productOpen.engine) > 0) && (
-<div className="flex flex-wrap items-baseline gap-2 px-3 py-2">
-                      <span className="text-neutral-400 text-left">Обʼєм двигуна</span>
-                      <span className="text-neutral-100 text-left">{formatEngine(productOpen.engine)}</span>
-                    </div>
-)}
-                    {(productOpen.type === "Форсунка" || productOpen.type === "ПНВТ") && (
-<div className="flex flex-wrap items-baseline gap-2 px-3 py-2">
-                      <span className="text-neutral-400 text-left">Гарантія</span>
-                      <span className="text-neutral-100 text-left">{getWarranty()} <a href="/#/warranty" onClick={(e)=>e.stopPropagation()} className="ml-1 underline decoration-dotted hover:text-yellow-400">детальніше</a></span>
-                    </div>
-)}
+                    <a href="tel:+380665507055" className="number-help-contact" aria-label="Зателефонувати менеджеру з підбору за номером 066 550 70 55">
+                      <span>Менеджер з підбору</span>
+                      <strong>066 550 70 55</strong>
+                      <small>Натисніть, щоб зателефонувати</small>
+                    </a>
                   </div>
-                </div>
-                
                 ) : (
-                  <div className="mt-3 border border-neutral-800 rounded-xl overflow-hidden">
-                    {compatProducts.length === 0 ? (
-                      <div className="px-4 py-6 text-neutral-400 text-sm">
-                        Немає комплектуючих для цього товару.
-                      </div>
-                    ) : (
-                      <div className="max-h-64 overflow-y-auto pr-1">
-  <ul className="divide-y divide-neutral-800">
-  {compatProducts.map((cp) => (
-    <li key={cp.id} className="grid grid-cols-[1fr_auto_auto_auto] items-center gap-3 px-3 py-2">
-      {/* Левый блок: номер полностью + маленький тип снизу */}
-      <div className="min-w-0">
-        <div className="font-medium text-neutral-100 break-words">{cp.number || '—'}</div>
-        <div className="text-xs text-neutral-400 mt-0.5">{cp.type}</div>
-      </div>
-
-      {/* Цена в один ряд */}
-      <div className="justify-self-end text-sm font-semibold text-yellow-400">
-        {(cp.price || 0).toLocaleString('uk-UA')} ₴
-      </div>
-
-      {/* Статус наличия */}
-      <div className="justify-self-end">
-        {Number(cp.qty) > 0 ? (
-          <span className="text-xs px-2 py-0.5 rounded-full border border-green-600 text-green-400">
-            В наявності
-          </span>
-        ) : (
-          <span className="text-xs px-2 py-0.5 rounded-full border border-yellow-600 text-yellow-400">
-            Під замовлення
-          </span>
-        )}
-      </div>
-
-      {/* Кнопка справа */}
-      <div className="justify-self-end">
-        <button
-          type="button"
-          onClick={(e) => { e.stopPropagation(); addToCart(cp); }}
-          className="text-xs rounded-lg border border-neutral-700 px-2 py-1 hover:border-yellow-400"
-        >
-          Додати в кошик
-        </button>
-      </div>
-    </li>
-  ))}
-</ul>
-</div>
-                    )}
+                  <div className="empty-catalog">
+                    <img src="/dh-logo2-brand.png" alt="" />
+                    <h3>За цими параметрами нічого не знайдено</h3>
+                    <p>Спробуйте змінити запит або очистити частину фільтрів.</p>
+                    <button type="button" onClick={resetFilters}>Показати всі товари</button>
                   </div>
-                )}
-<div className="flex items-center justify-between mt-4">
-                  <div className="flex items-center gap-2"><span className="text-white font-semibold text-2xl"><span className="text-white font-semibold text-2xl">Ціна</span></span> <div className="text-2xl font-extrabold text-yellow-400">
-                    {(productOpen.price || 0).toLocaleString("uk-UA")} ₴
-                  </div></div>
-                  {effectiveAvailability(productOpen) === "В наявності" ? (
-                    <span className="text-xs px-2 py-1 rounded-full border border-emerald-400 text-emerald-400">
-                      В наявності · {productOpen.qty} шт
-                    </span>
+                )
+              ) : (
+                <div className="catalog-grid">
+                  {shown.map((product) => (
+                    <article key={product.id} className="product-card" onClick={() => openProduct(product)}>
+                      <div className="product-image">
+                        {hasImages(product.images) ? (
+                          <img src={product.images[0]} alt={`${product.type} ${product.number}`} loading="lazy" />
+                        ) : (
+                          <img className="product-placeholder" src="/dh-logo2-brand.png" alt="Фото готується" />
+                        )}
+                        <span className="product-type">{product.type}</span>
+                        <span className={classNames("product-stock", effectiveAvailability(product) === "В наявності" ? "in-stock" : "preorder")}>
+                          {effectiveAvailability(product) === "В наявності" ? `В наявності · ${product.qty} шт` : "Під замовлення"}
+                        </span>
+                      </div>
+                      <div className="product-content">
+                        <div className="product-brand">{product.manufacturer} · {product.condition}</div>
+                        <h3>{product.number}</h3>
+                        {(product.cross || []).some((cross) => normalizePartNumber(cross) === normalizePartNumber(query)) && query.trim() && (
+                          <div className="product-cross-match">Знайдено за крос-номером <b>{query.trim()}</b></div>
+                        )}
+                        <dl>
+                          <div><dt>OEM</dt><dd>{product.oem || "—"}</dd></div>
+                          <ProductCrosses items={product.cross || []} highlight={query} />
+                          {Number(product.engine) > 0 && <div><dt>Двигун</dt><dd>{formatEngine(product.engine)}</dd></div>}
+                          <div className="product-card-warranty"><dt>Гарантія</dt><dd>6 місяців</dd></div>
+                        </dl>
+                        <div className="product-footer">
+                          <div><small>Ціна</small><strong>{(product.price || 0).toLocaleString("uk-UA")} ₴</strong></div>
+                          <button
+                            type="button"
+                            onClick={(event) => { event.stopPropagation(); addToCart(product); }}
+                            aria-label={`Додати ${product.number} до кошика`}
+                          >До кошика <span>＋</span></button>
+                        </div>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              )}
+
+              {!productsLoading && filteredSorted.length > 0 && (totalPages > 1 || filteredSorted.length > shown.length) && (
+                <nav className="catalog-pagination" aria-label="Сторінки каталогу">
+                  <span className="catalog-pagination-summary">Показано {shown.length} з {filteredSorted.length}</span>
+                  <div className="catalog-page-buttons">
+                    <button
+                      type="button"
+                      className="catalog-page-arrow"
+                      disabled={paginationPage === 1}
+                      onClick={() => goToCatalogPage(paginationPage - 1)}
+                      aria-label="Попередня сторінка"
+                    ><span>←</span><b>Назад</b></button>
+                    {pagesToShow.map((pageNumber, index) => pageNumber === "…" ? (
+                      <span className="catalog-page-ellipsis" key={`ellipsis-${index}`}>…</span>
+                    ) : (
+                      <button
+                        type="button"
+                        className={mode === "page" && currentPage === pageNumber ? "is-active" : ""}
+                        aria-current={mode === "page" && currentPage === pageNumber ? "page" : undefined}
+                        onClick={() => goToCatalogPage(pageNumber)}
+                        key={pageNumber}
+                      >{pageNumber}</button>
+                    ))}
+                    <button
+                      type="button"
+                      className="catalog-page-arrow"
+                      disabled={paginationPage === totalPages}
+                      onClick={() => goToCatalogPage(paginationPage + 1)}
+                      aria-label="Наступна сторінка"
+                    ><b>Далі</b><span>→</span></button>
+                  </div>
+                  {filteredSorted.length > shown.length && (
+                    <button type="button" className="catalog-show-more" onClick={showMoreProducts}>Показати ще</button>
+                  )}
+                </nav>
+              )}
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Product Modal */}
+      {productOpen && (
+        <div className="fixed inset-0 z-[60]">
+          <div className="modal-backdrop absolute inset-0" onClick={closeProduct} />
+          <div className="product-dialog product-dialog-modern absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-6xl">
+            <button type="button" className="product-dialog-close" onClick={closeProduct} aria-label="Закрити картку товару">×</button>
+
+            <div className="product-dialog-grid">
+              <div className="product-gallery-panel">
+                <div className="product-dialog-badges">
+                  <span>{productOpen.type}</span>
+                  <span className={effectiveAvailability(productOpen) === "В наявності" ? "available" : "preorder"}>
+                    {effectiveAvailability(productOpen) === "В наявності" ? `В наявності · ${productOpen.qty} шт` : "Під замовлення"}
+                  </span>
+                </div>
+
+                <div className="product-main-image">
+                  {hasImages(productOpen.images) ? (
+                    <img src={productOpen.images[activeImg]} alt={`${productOpen.type} ${productOpen.number}`} />
                   ) : (
-                    <span className="text-xs px-2 py-1 rounded-full border border-yellow-400 text-yellow-400">
-                      Під замовлення
-                    </span>
+                    <img className="product-main-placeholder" src="/dh-logo2-brand.png" alt="Фото готується" />
                   )}
                 </div>
 
-                <div className="flex gap-3 mt-5">
-                  <div className="flex items-center gap-3 mt-5">
-                    <label className="text-white text-sm">Кількість:</label>
-                    <input type="number"
+                {hasImages(productOpen.images) && productOpen.images.length > 1 && (
+                  <div className="product-thumbnails">
+                    {productOpen.images.map((img, idx) => (
+                      <button type="button" key={img} className={idx === activeImg ? "active" : ""} onClick={() => setActiveImg(idx)}>
+                        <img src={img} alt={`Фото ${idx + 1}`} />
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                <div className="product-quality-note">
+                  <div className="product-quality-check"><i>✓</i><span><small>Перед відправкою</small><strong>Перевірено</strong></span></div>
+                  <div className="product-quality-warranty"><span><small>Гарантія на деталь</small><strong>{getWarranty()}</strong></span></div>
+                </div>
+              </div>
+
+              <div className="product-detail-panel">
+                <div className="product-detail-eyebrow">{productOpen.manufacturer} · {productOpen.condition}</div>
+                <h2><span>{productOpen.type}</span>{productOpen.number}</h2>
+
+                <div className="product-dialog-tabs" role="tablist" aria-label="Інформація про товар">
+                  <button type="button" className={productTab === "info" ? "active" : ""} onClick={() => setProductTab("info")}>Характеристики</button>
+                  <button type="button" className={productTab === "parts" ? "active" : ""} onClick={() => setProductTab("parts")}>
+                    Комплектуючі {compatProducts.length > 0 && <b>{compatProducts.length}</b>}
+                  </button>
+                </div>
+
+                {productTab === "info" ? (
+                  <div className="product-dialog-info">
+                    <div className="product-spec-grid">
+                      <div><span>OEM номер</span><strong>{productOpen.oem || "—"}</strong></div>
+                      <div><span>Виробник</span><strong>{productOpen.manufacturer || "—"}</strong></div>
+                      <div><span>Стан</span><strong>{productOpen.condition || "—"}</strong></div>
+                      {Number(productOpen.engine) > 0 && <div><span>Обʼєм двигуна</span><strong>{formatEngine(productOpen.engine)}</strong></div>}
+                    </div>
+
+                    {(productOpen.type === "Форсунка" || productOpen.type === "ПНВТ") && (
+                      <div className="product-dialog-crosses">
+                        <span>Крос-номери</span>
+                        <div>{(productOpen.cross || []).length > 0 ? productOpen.cross.map((cross) => <b key={cross}>{cross}</b>) : <b>—</b>}</div>
+                      </div>
+                    )}
+
+                    <a className="product-warranty-link" href="/#/warranty" onClick={(event) => event.stopPropagation()}>Умови гарантії та повернення <span>→</span></a>
+                  </div>
+                ) : (
+                  <div className="product-parts-list">
+                    {compatProducts.length === 0 ? (
+                      <div className="product-parts-empty">Для цього товару комплектуючі ще не додані.</div>
+                    ) : compatProducts.map((cp) => (
+                      <div className="product-part-row" key={cp.id}>
+                        <div><strong>{cp.number || "—"}</strong><span>{cp.type}</span></div>
+                        <b>{(cp.price || 0).toLocaleString("uk-UA")} ₴</b>
+                        <button type="button" onClick={(event) => { event.stopPropagation(); addToCart(cp); }}>Додати</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div className="product-buy-box">
+                  <div className="product-buy-summary">
+                    <div>
+                      <span>Ціна за одиницю</span>
+                      <small>
+                        {modalProductStock > 0 ? `В наявності: ${modalProductStock} шт.` : "Під замовлення · 1–3 дні"}
+                        {modalProductInCart > 0 && ` · У кошику: ${modalProductInCart} шт.`}
+                      </small>
+                    </div>
+                    <strong>{(productOpen.price || 0).toLocaleString("uk-UA")} ₴</strong>
+                  </div>
+                  <div className="product-buy-actions">
+                    <label className="product-quantity-control">
+                      <span>Кількість</span>
+                      <div className="product-qty-stepper">
+                        <button
+                          type="button"
+                          aria-label={`Зменшити кількість: ${productOpen.number}`}
+                          onClick={() => setModalQtyStr(String(Math.max(1, modalSelectedQty - 1)))}
+                          disabled={modalSelectedQty <= 1 || modalMaxAdd <= 0}
+                        >−</button>
+                        <input
+                          aria-label={`Кількість для додавання: ${productOpen.number}`}
+                          type="number"
                           min={1}
-                          value={modalQtyStr}
-                          onChange={(e)=>{
-                            const raw = e.target.value; if (raw === "") { setModalQtyStr(""); return; }
-                            let n = parseInt(raw,10); if (!Number.isFinite(n)) n = 0; n = Math.max(0,n);
-                            const inCart = (cart.find(c=>c.id===productOpen?.id)?.qty || 0);
-                            const stock = Math.max(0, Number(productOpen?.qty)||0);
-                            const maxAdd = Math.max(0, stock - inCart);
-                            if (maxAdd && n > maxAdd) n = maxAdd;
-                            setModalQtyStr(String(n));
-                          }}
-                          className="w-20 bg-neutral-900 border border-neutral-800 rounded-lg px-2 py-1 text-sm" />
+                          max={modalMaxAdd || 1}
+                          value={String(Math.min(modalSelectedQty, Math.max(1, modalMaxAdd)))}
+                          readOnly
+                        />
+                        <button
+                          type="button"
+                          aria-label={`Збільшити кількість: ${productOpen.number}`}
+                          onClick={() => setModalQtyStr(String(Math.min(modalMaxAdd, modalSelectedQty + 1)))}
+                          disabled={modalMaxAdd <= 0 || modalSelectedQty >= modalMaxAdd}
+                        >+</button>
+                      </div>
+                    </label>
                     <button
+                      type="button"
                       onClick={() => {
-                        const parsed = parseInt(modalQtyStr || "0", 10) || 0;
-                        const inCart = (cart.find(c=>c.id===productOpen?.id)?.qty || 0);
-                        const stock = Math.max(0, Number(productOpen?.qty)||0);
-                        const isPreorder = stock === 0;
-                        const maxAdd = isPreorder ? 99 : Math.max(0, stock - inCart);
-                        const addN = Math.min(Math.max(1, parsed), maxAdd);
-                        if (!addN) return;
-                        addToCartN(productOpen, addN);
+                        const addN = Math.min(modalSelectedQty, modalMaxAdd);
+                        if (addN) addToCartN(productOpen, addN);
                       }}
-                      disabled={(parseInt(modalQtyStr || "0", 10) || 0) < 1 || ((Math.max(0, Number(productOpen?.qty)||0) > 0) && ((Math.max(0, Number(productOpen?.qty)||0) - (cart.find(c=>c.id===productOpen?.id)?.qty || 0)) <= 0))}
-                      className="rounded-xl border border-yellow-500/60 bg-yellow-400 text-neutral-950 hover:bg-yellow-300 hover:text-neutral-900 px-4 py-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                      disabled={modalMaxAdd <= 0}
                     >
-                      Додати до кошика
+                      <span>{modalMaxAdd > 0 ? "Додати до кошика" : "Уся кількість вже в кошику"}</span>
+                      {modalMaxAdd > 0 && <strong>{((productOpen.price || 0) * Math.min(modalSelectedQty, modalMaxAdd)).toLocaleString("uk-UA")} ₴</strong>}
                     </button>
                   </div>
+                  <a href="tel:+380665507055" className="product-consult-link">Потрібна допомога з підбором? <strong>066 550 70 55</strong></a>
                 </div>
               </div>
             </div>
@@ -1318,12 +1320,15 @@ export default function App() {
       {/* Cart Drawer */}
       {cartOpen && (
         <div className="fixed inset-0 z-[70]">
-          <div className="absolute inset-0 bg-black/60" onClick={() => setCartOpen(false)} />
-          <div className="absolute right-0 top-0 h-full w-full max-w-md bg-neutral-950 border-l border-neutral-800 flex flex-col">
+          <div className="modal-backdrop absolute inset-0 bg-black/60" onClick={() => setCartOpen(false)} />
+          <div className="cart-drawer absolute right-0 top-0 h-full w-full max-w-[580px] bg-neutral-950 border-l border-neutral-800 flex flex-col">
             {/* Header */}
-            <div className="p-4 border-b border-neutral-800 flex items-center justify-between">
-              <h2 className="text-xl font-bold">Кошик</h2>
-              <button onClick={() => setCartOpen(false)} className="text-white hover:text-neutral-300">
+            <div className="cart-drawer-header">
+              <div>
+                <h2>Кошик</h2>
+                {primaryCartItems.length > 0 && <span>{primaryCartItems.length} {primaryCartItems.length === 1 ? "товар" : "товари"}</span>}
+              </div>
+              <button onClick={() => setCartOpen(false)}>
                 Закрити
               </button>
             </div>
@@ -1334,66 +1339,123 @@ export default function App() {
                 <div className="text-neutral-400 text-left">Кошик порожній</div>
               ) : (
                 <div className="space-y-4">
-                  {cartItems.map((item) => (
-                    <div key={item.id} className="rounded-xl border border-neutral-800 p-3">
-                      <div className="flex items-start gap-3">
-                        <div className="w-24">
-                          <div className="h-16 w-24 rounded-lg bg-neutral-800 grid place-items-center text-neutral-400 text-xs overflow-hidden">
+                  {primaryCartItems.map((item) => {
+                    const linkedWasher = washersByParentId.get(String(item.id));
+                    const isInjector = item.type === "Форсунка";
+                    const suggestedQuantity = Math.max(1, Number(item.qty) || 0);
+                    return (
+                      <div key={item.id} className="cart-product-group">
+                        <div className="cart-product-main">
+                          <div className="cart-product-thumb">
                             {hasImages(item.images) ? (
-                              <img src={item.images[0]} alt="" className="w-full h-full object-cover" />
+                              <img src={item.images[0]} alt="" />
                             ) : (
-                              "Фото"
+                              <span>Без фото</span>
                             )}
                           </div>
-                          <div className="mt-1 w-24">
-                            {((getProductStockById(products, item.id) || 0) > 0) ? (
-                              <span className="block w-full text-center text-[11px] py-[3px] rounded-full border border-green-400 text-green-400">В наявності</span>
+                          <div className="cart-product-info">
+                            <div className="cart-product-topline">
+                              <div>
+                                <span className="cart-product-type">{item.type || "Деталь"}</span>
+                                <div className="cart-product-number">{item.number}</div>
+                              </div>
+                              <div className="cart-product-price">
+                                <span>{Number(item.price || 0).toLocaleString("uk-UA")} ₴/шт.</span>
+                                <strong>{((item.price || 0) * Math.max(0, item.qty)).toLocaleString("uk-UA")} ₴</strong>
+                              </div>
+                            </div>
+                            <div className="cart-product-meta">
+                              {(item.manufacturer || item.condition) && <span>{[item.manufacturer, item.condition].filter(Boolean).join(" · ")}</span>}
+                              <span className={(getProductStockById(products, item.id) || 0) > 0 ? "is-stock" : "is-order"}>
+                                {(getProductStockById(products, item.id) || 0) > 0 ? "В наявності" : "Під замовлення · 1–3 дні"}
+                              </span>
+                              <span className="is-warranty">Гарантія 6 місяців</span>
+                            </div>
+                            <div className="cart-product-controls">
+                              <label className="cart-quantity-control">
+                                <span>Кількість</span>
+                                <div className="cart-qty-stepper">
+                                  <button
+                                    type="button"
+                                    aria-label={`Зменшити кількість: ${item.number}`}
+                                    onClick={() => updateQty(item.id, Math.max(1, Number(item.qty) - 1))}
+                                    disabled={Number(item.qty) <= 1}
+                                  >−</button>
+                                  <input
+                                    aria-label={`Кількість: ${item.number}`}
+                                    type="number"
+                                    min={1}
+                                    max={getProductStockById(products, item.id) || undefined}
+                                    value={String(item.qty)}
+                                    readOnly
+                                  />
+                                  <button
+                                    type="button"
+                                    aria-label={`Збільшити кількість: ${item.number}`}
+                                    onClick={() => updateQty(item.id, Number(item.qty) + 1)}
+                                    disabled={(getProductStockById(products, item.id) || 0) > 0 && Number(item.qty) >= getProductStockById(products, item.id)}
+                                  >+</button>
+                                </div>
+                              </label>
+                              <button className="cart-remove-product" onClick={() => removeFromCart(item.id)}>Видалити товар</button>
+                            </div>
+                          </div>
+                        </div>
+
+                        {isInjector && (
+                          <div className={classNames("cart-washer-row", linkedWasher && "is-added")}>
+                            <div className="cart-washer-copy">
+                              <small>До цієї форсунки</small>
+                              <strong>Мідна шайба</strong>
+                              <span>{item.number} · 100 ₴/шт.</span>
+                            </div>
+                            {linkedWasher ? (
+                              <div className="cart-washer-controls">
+                                <div className="cart-qty-stepper cart-qty-stepper-small">
+                                  <button
+                                    type="button"
+                                    aria-label={`Зменшити кількість шайб до форсунки ${item.number}`}
+                                    onClick={() => updateQty(linkedWasher.id, Math.max(1, Number(linkedWasher.qty) - 1))}
+                                    disabled={Number(linkedWasher.qty) <= 1}
+                                  >−</button>
+                                  <input
+                                    aria-label={`Кількість шайб до форсунки ${item.number}`}
+                                    type="number"
+                                    min={1}
+                                    max={COPPER_WASHER_PRODUCT.qty}
+                                    value={String(linkedWasher.qty)}
+                                    readOnly
+                                  />
+                                  <button
+                                    type="button"
+                                    aria-label={`Збільшити кількість шайб до форсунки ${item.number}`}
+                                    onClick={() => updateQty(linkedWasher.id, Number(linkedWasher.qty) + 1)}
+                                  >+</button>
+                                </div>
+                                <strong>{(Math.max(0, Number(linkedWasher.qty) || 0) * 100).toLocaleString("uk-UA")} ₴</strong>
+                                <button type="button" onClick={() => removeFromCart(linkedWasher.id)}>Прибрати</button>
+                              </div>
                             ) : (
-                              <span className="block w-full text-center text-[11px] py-[3px] rounded-full border border-yellow-400 text-yellow-400">1–3 дні</span>
+                              <button type="button" className="cart-washer-add" onClick={() => addCopperWasherForInjector(item)}>
+                                Додати {suggestedQuantity} шт. <span>{(suggestedQuantity * 100).toLocaleString("uk-UA")} ₴</span>
+                              </button>
                             )}
                           </div>
-                        </div>
-                        <div className="flex-1">
-                          <div className="font-semibold">{item.number}</div>
-                          <div className="text-sm text-neutral-400">{item.type || "—"}</div>
-                          <div className="flex items-center gap-2 mt-2">
-                            <input
-                              type="number"
-                              min={0}
-                              max={getProductStockById(products, item.id) || undefined}
-                              value={String(item.qty)}
-                              onChange={(e) => {
-                                const stock = getProductStockById(products, item.id);
-                                let n = parseInt(e.target.value || "0", 10);
-                                if (!Number.isFinite(n)) n = 0;
-                                if (stock && n > stock) n = stock;
-                                updateQty(item.id, String(n));
-                                if (String(n) !== e.target.value) e.target.value = String(n);
-                              }}
-                              className="w-24 bg-neutral-900 border border-neutral-800 rounded-lg px-2 py-1 text-sm"
-                            />
-                            <button onClick={() => removeFromCart(item.id)} className="text-sm text-red-400 hover:text-red-300">
-                              Видалити
-                            </button>
-                          </div>
-                        </div>
-                        <div className="font-semibold text-yellow-400">
-                          {((item.price || 0) * Math.max(0, item.qty)).toLocaleString("uk-UA")} ₴
-                        </div>
+                        )}
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
 
             {/* Sticky bottom panel */}
-            <div className="p-4 border-t border-neutral-800 bg-neutral-950">
-              <div className="flex items-center justify-between">
-                <div className="text-neutral-400 text-left">Разом</div>
-                <div className="text-lg font-bold text-yellow-400">{cartTotal.toLocaleString("uk-UA")} ₴</div>
+            <div className="cart-drawer-footer">
+              <div className="cart-total-line">
+                <div>Разом</div>
+                <strong>{cartTotal.toLocaleString("uk-UA")} ₴</strong>
               </div>
-              <div className="mt-3 flex items-center justify-between gap-2">
+              <div className="cart-footer-actions">
                 <button
                   onClick={openCheckout}
                   disabled={cartItems.length === 0 || cartItems.some((i) => i.qty <= 0)}
@@ -1401,14 +1463,14 @@ export default function App() {
                     "flex-1 rounded-xl font-semibold py-3",
                     cartItems.length === 0 || cartItems.some((i) => i.qty <= 0)
                       ? "bg-neutral-800 text-neutral-500 cursor-not-allowed"
-                      : "bg-yellow-400 text-neutral-950 hover:brightness-90"
+                      : "bg-[#34B7B7] text-neutral-950 hover:brightness-90"
                   )}
                 >
                   Оформити замовлення
                 </button>
                 <button
                   onClick={() => setCartOpen(false)}
-                  className="rounded-xl border border-neutral-700 px-4 py-3 font-semibold hover:border-yellow-400"
+                  className="rounded-xl border border-neutral-700 px-4 py-3 font-semibold hover:border-[#34B7B7]"
                 >
                   Продовжити покупки
                 </button>
@@ -1424,8 +1486,8 @@ export default function App() {
 {/* Checkout Modal (safe) */}
 {checkoutOpen && (
   <div className="fixed inset-0 z-[80]">
-    <div className="absolute inset-0 bg-black/60" onClick={() => setCheckoutOpen(false)} />
-    <div className="absolute inset-x-0 top-10 mx-auto max-w-4xl bg-neutral-950 border border-neutral-800 rounded-2xl overflow-hidden">
+    <div className="modal-backdrop absolute inset-0 bg-black/60" onClick={() => setCheckoutOpen(false)} />
+    <div className="checkout-dialog absolute inset-x-0 top-10 mx-auto max-w-4xl bg-neutral-950 border border-neutral-800 rounded-2xl overflow-hidden">
       <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-800">
         <div className="text-lg font-semibold">Оформлення</div>
         <button onClick={() => setCheckoutOpen(false)} className="text-white hover:text-neutral-300">Закрити</button>
@@ -1455,13 +1517,13 @@ export default function App() {
             <div className="flex gap-2 pt-2">
               <button
                 onClick={() => { setCheckoutOpen(false); setCartOpen(false); }}
-                className="rounded-xl border border-yellow-500/60 bg-yellow-400 text-neutral-950 px-4 py-2 font-semibold hover:brightness-95"
+                className="rounded-xl border border-[#34B7B7]/60 bg-[#34B7B7] text-neutral-950 px-4 py-2 font-semibold hover:brightness-95"
               >
                 Повернутися до каталогу
               </button>
               <button
                 onClick={() => { setCheckoutOpen(false); }}
-                className="rounded-xl border border-neutral-700 px-4 py-2 font-semibold hover:border-yellow-400"
+                className="rounded-xl border border-neutral-700 px-4 py-2 font-semibold hover:border-[#34B7B7]"
               >
                 Закрити
               </button>
@@ -1477,7 +1539,7 @@ export default function App() {
                 maxLength={50}
                 value={order.name || ""}
                 onChange={(e)=>{ const v=(e.target.value||"").replace(/[0-9]/g,""); setOrder(o=>({...o, name: v})); }}
-                className="w-full rounded-lg bg-neutral-900 border border-neutral-800 px-3 py-2 text-sm outline-none focus:border-yellow-400"
+                className="w-full rounded-lg bg-neutral-900 border border-neutral-800 px-3 py-2 text-sm outline-none focus:border-[#34B7B7]"
                 placeholder="Введіть ПІБ"
               />
             </label>
@@ -1493,7 +1555,7 @@ export default function App() {
                   value={formatPhoneMask(order.phone || "")}
                   onChange={(e)=>{ const d=(e.target.value||"").replace(/\D/g,"").slice(0,9); setOrder(o=>({...o, phone:d})); }}
                   onKeyDown={(e) => { if (e.key === "Backspace") { const input = e.target; const before = (input.value || "").slice(0, input.selectionStart || 0); const digitsBefore = (before.match(/\d/g) || []).length; const prev = (order.phone || ""); if (digitsBefore > 0) { const next = prev.slice(0, digitsBefore - 1) + prev.slice(digitsBefore); setOrder(o => ({ ...o, phone: next })); e.preventDefault(); } } }}
-                        className="flex-1 rounded-lg bg-neutral-900 border border-neutral-800 px-3 py-2 text-sm outline-none focus:border-yellow-400"
+                        className="flex-1 rounded-lg bg-neutral-900 border border-neutral-800 px-3 py-2 text-sm outline-none focus:border-[#34B7B7]"
                   placeholder="(XX) XXX-XX-XX"
                 />
               </div>
@@ -1511,7 +1573,7 @@ export default function App() {
                       payment: o.payment || "Передплата по реквізитам",
                     }));
                   }}
-                  className={classNames("px-3 py-1.5 rounded-lg border text-sm", order.delivery==="Нова пошта" ? "border-yellow-400 text-yellow-400" : "border-neutral-700")}
+                  className={classNames("px-3 py-1.5 rounded-lg border text-sm", order.delivery==="Нова пошта" ? "border-[#34B7B7] text-[#34B7B7]" : "border-neutral-700")}
                 >
                   Нова пошта
                 </button>
@@ -1526,7 +1588,7 @@ export default function App() {
                     setNpCity(null); setNpCityInput(""); setNpCityList([]); setNpCityOpen(false);
                     setNpWhInput(""); setNpWhList([]); setNpWhOpen(false);
                   }}
-                  className={classNames("px-3 py-1.5 rounded-lg border text-sm", order.delivery==="Самовивіз" ? "border-yellow-400 text-yellow-400" : "border-neutral-700")}
+                  className={classNames("px-3 py-1.5 rounded-lg border text-sm", order.delivery==="Самовивіз" ? "border-[#34B7B7] text-[#34B7B7]" : "border-neutral-700")}
                 >
                   Самовивіз
                 </button>
@@ -1542,7 +1604,7 @@ export default function App() {
                     value={npCityInput}
                     onChange={(e)=>setNpCityInput(e.target.value)}
                     onFocus={()=>{ if (npCitySelectRef.current) { npCitySelectRef.current = false; return; } if (npCityList.length) setNpCityOpen(true); }}
-                    className="w-full rounded-lg bg-neutral-900 border border-neutral-800 px-3 py-2 text-sm outline-none focus:border-yellow-400"
+                    className="w-full rounded-lg bg-neutral-900 border border-neutral-800 px-3 py-2 text-sm outline-none focus:border-[#34B7B7]"
                     placeholder="Почніть вводити..."
                   />
                   {npCityOpen && npCityList && npCityList.length > 0 && (
@@ -1575,8 +1637,8 @@ export default function App() {
 
                 {/* NP type */}
                 <div className="flex gap-2">
-                  <button type="button" onClick={()=>setNpType("branch")} className={classNames("px-3 py-1.5 rounded-lg border text-sm", npType==="branch"?"border-yellow-400 text-yellow-400":"border-neutral-700")}>Відділення</button>
-                  <button type="button" onClick={()=>setNpType("postomat")} className={classNames("px-3 py-1.5 rounded-lg border text-sm", npType==="postomat"?"border-yellow-400 text-yellow-400":"border-neutral-700")}>Поштомат</button>
+                  <button type="button" onClick={()=>setNpType("branch")} className={classNames("px-3 py-1.5 rounded-lg border text-sm", npType==="branch"?"border-[#34B7B7] text-[#34B7B7]":"border-neutral-700")}>Відділення</button>
+                  <button type="button" onClick={()=>setNpType("postomat")} className={classNames("px-3 py-1.5 rounded-lg border text-sm", npType==="postomat"?"border-[#34B7B7] text-[#34B7B7]":"border-neutral-700")}>Поштомат</button>
                 </div>
 
                 {/* Warehouse */}
@@ -1586,7 +1648,7 @@ export default function App() {
                     value={npWhInput}
                     onChange={(e)=>{ setNpWhInput(e.target.value); setNpWhOpen(true); }}
                     onFocus={()=>{ if (npWhList.length) setNpWhOpen(true); }}
-                    className="w-full rounded-lg bg-neutral-900 border border-neutral-800 px-3 py-2 text-sm outline-none focus:border-yellow-400"
+                    className="w-full rounded-lg bg-neutral-900 border border-neutral-800 px-3 py-2 text-sm outline-none focus:border-[#34B7B7]"
                     placeholder="Почніть вводити..."
                   />
                   {npWhOpen && npWhList && npWhList.length > 0 && (
@@ -1616,7 +1678,7 @@ export default function App() {
                   <select
                     value={order.payment || "Передплата по реквізитам"}
                     onChange={(e)=>setOrder(o=>({...o, payment: e.target.value}))}
-                    className="w-full rounded-lg bg-neutral-900 border border-neutral-800 px-3 py-2 text-sm outline-none focus:border-yellow-400"
+                    className="w-full rounded-lg bg-neutral-900 border border-neutral-800 px-3 py-2 text-sm outline-none focus:border-[#34B7B7]"
                   >
                     <option value="Передплата по реквізитам">Передплата по реквізитам</option>
                     <option value="Накладений платіж">Накладений платіж</option>
@@ -1639,7 +1701,7 @@ export default function App() {
                 <select
                   value={order.payment || "Готівковий розрахунок"}
                   onChange={(e)=>setOrder(o=>({...o, payment: e.target.value}))}
-                  className="w-full rounded-lg bg-neutral-900 border border-neutral-800 px-3 py-2 text-sm outline-none focus:border-yellow-400"
+                  className="w-full rounded-lg bg-neutral-900 border border-neutral-800 px-3 py-2 text-sm outline-none focus:border-[#34B7B7]"
                 >
                   <option value="Передплата по реквізитам">Передплата по реквізитам</option>
                   <option value="Готівковий розрахунок">Готівковий розрахунок</option>
@@ -1657,7 +1719,7 @@ export default function App() {
               />
               <span className="text-sm text-white">
                 Підтверджую, що ознайомився з{" "}
-                <a className="text-yellow-400 no-underline hover:no-underline" href="#/warranty">Гарантією</a>
+                <a className="text-[#34B7B7] no-underline hover:no-underline" href="#/warranty">Гарантією</a>
                 {" "}та умовами повернення
               </span>
             </label>
@@ -1670,9 +1732,9 @@ export default function App() {
               />
               <span className="text-sm text-white">
                 Погоджуюся з умовами{" "}
-                <a className="text-yellow-400 no-underline hover:no-underline" href="#/offer">Публічної оферти</a>
+                <a className="text-[#34B7B7] no-underline hover:no-underline" href="#/offer">Публічної оферти</a>
                 {" "}та надаю згоду на обробку моїх персональних даних відповідно до{" "}
-                <a className="text-yellow-400 no-underline hover:no-underline" href="#/privacy">Політики конфіденційності</a>.
+                <a className="text-[#34B7B7] no-underline hover:no-underline" href="#/privacy">Політики конфіденційності</a>.
               </span>
             </label>
 
@@ -1712,7 +1774,7 @@ export default function App() {
 </div>
             <div className="flex items-center justify-between border-t border-neutral-800 mt-2 pt-2">
               <div className="text-white text-lg">Разом</div>
-              <div className="font-semibold text-yellow-400">{cartTotal.toLocaleString("uk-UA")} ₴</div>
+              <div className="font-semibold text-[#34B7B7]">{cartTotal.toLocaleString("uk-UA")} ₴</div>
             </div>
             {/* Submit full width under total */}
             <div className="pt-3">
@@ -1729,7 +1791,7 @@ export default function App() {
                     disabled={!okToSubmit}
                     className={classNames(
                       "w-full rounded-xl font-semibold py-3",
-                      !okToSubmit ? "bg-neutral-800 text-neutral-500 cursor-not-allowed" : "bg-yellow-400 text-neutral-950 hover:brightness-90"
+                      !okToSubmit ? "bg-neutral-800 text-neutral-500 cursor-not-allowed" : "bg-[#34B7B7] text-neutral-950 hover:brightness-90"
                     )}
                   >
                     Підтвердити замовлення
@@ -1766,7 +1828,7 @@ export default function App() {
                     <button
                       key={p.id}
                       onClick={() => openProduct(p)}
-                      className="rv-card shrink-0 w-[160px] md:w-[180px] bg-neutral-950/60 border border-neutral-800 rounded-2xl hover:border-yellow-500/60 transition-colors transform hover:-translate-y-0.5 active:translate-y-0 text-left"
+                      className="rv-card shrink-0 w-[160px] md:w-[180px] bg-neutral-950/60 border border-neutral-800 rounded-2xl hover:border-[#34B7B7]/60 transition-colors transform hover:-translate-y-0.5 active:translate-y-0 text-left"
                     >
                       <div className="rv-thumb w-full aspect-[4/3] overflow-hidden rounded-t-2xl bg-neutral-900">
                         {Array.isArray(p.images) && p.images.length > 0 ? (
@@ -1784,7 +1846,7 @@ export default function App() {
                           <span className="rv-cond text-[11px] px-2 py-0.5 rounded-full border border-neutral-700 text-neutral-300">
                             {p.condition || "—"}
                           </span>
-                          <span className="rv-price text-[13px] font-semibold text-yellow-400">
+                          <span className="rv-price text-[13px] font-semibold text-[#34B7B7]">
                             {(p.price || 0).toLocaleString("uk-UA")} ₴
                           </span>
                         </div>
@@ -1805,10 +1867,10 @@ export default function App() {
       )}
 
       {/* Footer */}
-      <footer className="mt-16 border-t border-neutral-800">
-<div className="mx-auto max-w-7xl px-4 py-8 text-sm text-neutral-400 flex items-center justify-between">
+      <footer className="brand-footer mt-16 border-t border-neutral-800">
+<div className="mx-auto max-w-7xl px-4 py-8 text-sm text-neutral-400 flex flex-col items-start gap-4 md:flex-row md:items-center md:justify-between">
   <div>© {new Date().getFullYear()} Diesel Hub</div>
-  <div className="flex items-center gap-4">
+  <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
     <a className="hover:text-white" href="#/offer">Оферта</a>
     <a className="hover:text-white" href="#/warranty">Повернення та гарантія</a>
     <a className="hover:text-white" href="#/privacy">Конфіденційність</a>

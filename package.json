@@ -8,6 +8,7 @@
     "api": "node --env-file=.env server.mjs",
     "dev:all": "concurrently -n web,api -c green,cyan \"vite\" \"node --env-file=.env server.mjs\"",
     "build": "vite build",
+    "test": "node --test test/*.test.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
