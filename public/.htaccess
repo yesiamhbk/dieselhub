@@ -4,6 +4,11 @@ RewriteCond %{HTTPS} !=on [OR]
 RewriteCond %{HTTP_HOST} ^www\.dieselhub\.com\.ua$ [NC]
 RewriteRule ^ https://dieselhub.com.ua%{REQUEST_URI} [L,R=301]
 
+# Link-preview and search crawlers receive server-rendered product metadata.
+# Regular visitors continue to the SPA product page below.
+RewriteCond %{HTTP_USER_AGENT} (facebookexternalhit|Facebot|Twitterbot|LinkedInBot|TelegramBot|WhatsApp|Viber|Discordbot|Slackbot|SkypeUriPreview|Applebot|Googlebot|bingbot|Pinterestbot) [NC]
+RewriteRule ^product/([^/]+)/?$ https://diesel-api.onrender.com/share/product/$1 [R=302,L,NE]
+
 # Serve real files and route application URLs (for example /product/0445110110)
 # through the SPA entry point.
 RewriteCond %{REQUEST_FILENAME} -f [OR]

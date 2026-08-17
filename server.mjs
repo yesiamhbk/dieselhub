@@ -5,6 +5,13 @@ import multer from "multer";
 import crypto from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { buildTelegramOrderMessage } from "./lib/telegram-order.mjs";
+import {
+  buildProductOgSvg,
+  buildProductShareMeta,
+  normalizeProductNumber,
+  renderProductOgJpeg,
+  renderProductShareHtml,
+} from "./lib/product-preview.mjs";
 
 const app = express();
 app.set('trust proxy', true);
@@ -90,6 +97,35 @@ const supaAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 const textValue = (value, max = 200) => String(value || "").trim().slice(0, max);
 const normalizePartNumber = (value) => textValue(value, 120).toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 80);
 const hashIp = (ip) => crypto.createHash("sha256").update(`${process.env.ANALYTICS_SALT || "dieselhub-local"}|${ip}`).digest("hex").slice(0, 24);
+const PUBLIC_PRODUCT_FIELDS = "id,number,oem,cross,compat_for,manufacturer,condition,type,availability,qty,price,engine,images,sort_order,pinned";
+const productOgCache = new Map();
+
+async function findPublicProduct(rawNumber) {
+  const number = normalizeProductNumber(String(rawNumber || "").replace(/\.jpg$/i, ""));
+  if (!number) return null;
+  const exact = await supaAdmin.from("products").select(PUBLIC_PRODUCT_FIELDS).eq("number", number).order("id", { ascending: true }).limit(1).maybeSingle();
+  if (exact.error) throw exact.error;
+  if (exact.data) return exact.data;
+  const insensitive = await supaAdmin.from("products").select(PUBLIC_PRODUCT_FIELDS).ilike("number", number).order("id", { ascending: true }).limit(1).maybeSingle();
+  if (insensitive.error) throw insensitive.error;
+  return insensitive.data || null;
+}
+
+async function buildProductOgImage(product) {
+  const photoUrl = Array.isArray(product.images) ? product.images.find(Boolean) : "";
+  let source = null;
+  if (photoUrl) {
+    const parsed = new URL(photoUrl);
+    if (parsed.protocol !== "https:") throw new Error("unsupported product image protocol");
+    const response = await fetch(parsed, { signal: AbortSignal.timeout(7000) });
+    if (!response.ok) throw new Error(`product image returned ${response.status}`);
+    const declaredSize = Number(response.headers.get("content-length")) || 0;
+    if (declaredSize > 12 * 1024 * 1024) throw new Error("product image is too large");
+    source = Buffer.from(await response.arrayBuffer());
+    if (source.length > 12 * 1024 * 1024) throw new Error("product image is too large");
+  }
+  return renderProductOgJpeg(product, source);
+}
 
 // ====== простая админ-авторизация ======
 function requireAdmin(req, res, next) {
@@ -130,13 +166,63 @@ app.get("/api/products", async (_req, res) => {
   try {
     const { data, error } = await supaAdmin
       .from("products")
-      .select("id,number,oem,cross,compat_for,manufacturer,condition,type,availability,qty,price,engine,images,sort_order,pinned")
+      .select(PUBLIC_PRODUCT_FIELDS)
       .order("id", { ascending: true });
     if (error) throw error;
     res.json(data || []);
   } catch (e) {
     console.error("[/api/products] error:", e);
     res.status(500).json({ error: String(e.message || e) });
+  }
+});
+
+app.get("/api/products/:number", async (req, res) => {
+  try {
+    const product = await findPublicProduct(req.params.number);
+    if (!product) return res.status(404).json({ error: "product_not_found" });
+    res.setHeader("Cache-Control", "public, max-age=60, s-maxage=300, stale-while-revalidate=600");
+    res.json(product);
+  } catch (error) {
+    console.error("[/api/products/:number] error:", error);
+    res.status(500).json({ error: "product_unavailable" });
+  }
+});
+
+app.get("/api/og/product/:number", async (req, res) => {
+  try {
+    const product = await findPublicProduct(req.params.number);
+    if (!product) return res.status(404).type("text/plain").send("product not found");
+    const imageKey = JSON.stringify([product.id, product.number, product.price, product.qty, product.availability, product.condition, product.images?.[0] || ""]);
+    const cached = productOgCache.get(imageKey);
+    const now = Date.now();
+    let image = cached && now - cached.createdAt < 5 * 60 * 1000 ? cached.buffer : null;
+    if (!image) {
+      try {
+        image = await buildProductOgImage(product);
+      } catch (imageError) {
+        console.warn("[product OG photo] using fallback:", imageError.message || imageError);
+        image = await buildProductOgImage({ ...product, images: [] });
+      }
+      if (productOgCache.size >= 64) productOgCache.delete(productOgCache.keys().next().value);
+      productOgCache.set(imageKey, { buffer: image, createdAt: now });
+    }
+    res.setHeader("Cache-Control", "public, max-age=300, s-maxage=600, stale-while-revalidate=86400");
+    res.type("image/jpeg").send(image);
+  } catch (error) {
+    console.error("[/api/og/product/:number] error:", error);
+    res.status(500).type("text/plain").send("preview unavailable");
+  }
+});
+
+app.get("/share/product/:number", async (req, res) => {
+  try {
+    const product = await findPublicProduct(req.params.number);
+    if (!product) return res.status(404).type("text/plain").send("product not found");
+    res.setHeader("Cache-Control", "public, max-age=60, s-maxage=300, stale-while-revalidate=600");
+    res.type("html").send(renderProductShareHtml(product));
+  } catch (error) {
+    console.error("[/share/product/:number] error:", error);
+    res.status(500).type("text/plain").send("preview unavailable");
   }
 });
 
