@@ -691,6 +691,35 @@ export default function App() {
   const npWhBoxRef = useRef(null);
 
   useEffect(() => {
+    const overlayOpen = Boolean(productOpen || cartOpen || checkoutOpen);
+    if (!overlayOpen) return;
+
+    const scrollY = window.scrollY;
+    const previous = {
+      htmlOverflow: document.documentElement.style.overflow,
+      bodyOverflow: document.body.style.overflow,
+      bodyPosition: document.body.style.position,
+      bodyTop: document.body.style.top,
+      bodyWidth: document.body.style.width,
+    };
+
+    document.documentElement.style.overflow = "hidden";
+    document.body.style.overflow = "hidden";
+    document.body.style.position = "fixed";
+    document.body.style.top = `-${scrollY}px`;
+    document.body.style.width = "100%";
+
+    return () => {
+      document.documentElement.style.overflow = previous.htmlOverflow;
+      document.body.style.overflow = previous.bodyOverflow;
+      document.body.style.position = previous.bodyPosition;
+      document.body.style.top = previous.bodyTop;
+      document.body.style.width = previous.bodyWidth;
+      window.scrollTo(0, scrollY);
+    };
+  }, [productOpen, cartOpen, checkoutOpen]);
+
+  useEffect(() => {
     if (!checkoutOpen) return;
     if (npCitySelectRef.current) { npCitySelectRef.current = false; setNpCityOpen(false); setNpCityList([]); return; }
     const q = npCityInput.trim();
@@ -1120,7 +1149,7 @@ export default function App() {
                         <dl>
                           <div><dt>OEM</dt><dd>{product.oem || "—"}</dd></div>
                           <ProductCrosses items={product.cross || []} highlight={query} />
-                          {Number(product.engine) > 0 && <div><dt>Двигун</dt><dd>{formatEngine(product.engine)}</dd></div>}
+                          {Number(product.engine) > 0 && <div className="product-card-engine"><dt>Двигун</dt><dd>{formatEngine(product.engine)}</dd></div>}
                           <div className="product-card-warranty"><dt>Гарантія</dt><dd>6 місяців</dd></div>
                         </dl>
                         <div className="product-footer">
@@ -1179,9 +1208,9 @@ export default function App() {
 
       {/* Product Modal */}
       {productOpen && (
-        <div className="fixed inset-0 z-[60]">
+        <div className="product-overlay fixed inset-0 z-[60]" role="dialog" aria-modal="true" aria-label={`Картка товару ${productOpen.number}`}>
           <div className="modal-backdrop absolute inset-0" onClick={closeProduct} />
-          <div className="product-dialog product-dialog-modern absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-6xl">
+          <div className="product-dialog product-dialog-modern">
             <button type="button" className="product-dialog-close" onClick={closeProduct} aria-label="Закрити картку товару">×</button>
 
             <div className="product-dialog-grid">
@@ -1832,7 +1861,7 @@ export default function App() {
                     >
                       <div className="rv-thumb w-full aspect-[4/3] overflow-hidden rounded-t-2xl bg-neutral-900">
                         {Array.isArray(p.images) && p.images.length > 0 ? (
-                          <img src={p.images[0]} alt={p.number ? `${p.number} — ${p.manufacturer || ''}` : ''} className="w-full h-full object-cover" loading="lazy" />
+                          <img src={p.images[0]} alt={p.number ? `${p.number} — ${p.manufacturer || ''}` : ''} className="w-full h-full object-contain p-2" loading="lazy" />
                         ) : (
                           <div className="w-full h-full flex items-center justify-center text-sm text-neutral-500">Фото</div>
                         )}
