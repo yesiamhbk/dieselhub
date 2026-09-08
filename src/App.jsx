@@ -1,5 +1,6 @@
 // src/App.jsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { findProductForRoute } from "../lib/product-route.mjs";
 import { captureAttribution, trackEvent, trackSearch } from "./analytics.js";
 import { getPaginationItems } from "./pagination.js";
 import { applyProductSeo, productPath, resetSeo } from "./seo.js";
@@ -614,8 +615,9 @@ export default function App() {
       const legacyId = new URL(window.location.href).searchParams.get("p");
       const routeNumber = decodeURIComponent(window.location.pathname.match(/^\/product\/([^/]+)\/?$/)?.[1] || "");
       if ((legacyId || routeNumber) && Array.isArray(products) && products.length) {
-        const key = normalizePartNumber(routeNumber);
-        const found = products.find((pp) => legacyId ? String(pp.id) === String(legacyId) : [pp.number, pp.oem, ...(pp.cross || [])].some(value => normalizePartNumber(value) === key));
+        const found = legacyId
+          ? products.find((pp) => String(pp.id) === String(legacyId))
+          : findProductForRoute(products, routeNumber);
         if (found) {
           setProductOpen(found);
           setActiveImg(0);
@@ -632,8 +634,7 @@ export default function App() {
       try {
         const routeNumber = decodeURIComponent(window.location.pathname.match(/^\/product\/([^/]+)\/?$/)?.[1] || "");
         if (routeNumber) {
-          const key = normalizePartNumber(routeNumber);
-          const found = products.find((pp) => [pp.number, pp.oem, ...(pp.cross || [])].some(value => normalizePartNumber(value) === key));
+          const found = findProductForRoute(products, routeNumber);
           if (found) {
             setProductOpen(found);
             pushRecent(found.id);

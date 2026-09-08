@@ -1,3 +1,5 @@
+import { productRoutePath, productRouteSlug } from "../lib/product-route.mjs";
+
 const SITE_URL = "https://dieselhub.com.ua";
 const API_URL = (import.meta.env.VITE_API_BASE || "https://diesel-api.onrender.com").replace(/\/$/, "");
 const DEFAULT_TITLE = "Diesel Hub — Форсунки та ПНВТ Common Rail";
@@ -19,18 +21,19 @@ function setCanonical(url) {
 }
 
 export function productPath(product) {
-  return `/product/${encodeURIComponent(String(product?.number || product?.id || "").trim())}`;
+  return productRoutePath(product);
 }
 
 export function applyProductSeo(product) {
   if (!product) return resetSeo();
   const number = String(product.number || "").trim();
   const brand = String(product.manufacturer || "Diesel Hub").trim();
+  const condition = String(product.condition || "").trim();
   const related = [product.oem, ...(Array.isArray(product.cross) ? product.cross : [])].filter(Boolean);
-  const title = `${product.type || "Форсунка"} ${brand} ${number} — купити в Україні | Diesel Hub`;
-  const description = `${product.type || "Форсунка"} ${brand} ${number}. ${product.condition || ""}. OEM та крос-номери: ${related.slice(0, 6).join(", ") || "у картці товару"}. Гарантія 6 місяців, доставка по Україні.`.slice(0, 300);
+  const title = `${product.type || "Форсунка"} ${brand} ${number}${condition ? ` — ${condition}` : ""} | Diesel Hub`;
+  const description = `${product.type || "Форсунка"} ${brand} ${number}. ${condition}. OEM та крос-номери: ${related.slice(0, 6).join(", ") || "у картці товару"}. Гарантія 6 місяців, доставка по Україні.`.slice(0, 300);
   const canonical = `${SITE_URL}${productPath(product)}`;
-  const shareImage = `${API_URL}/api/og/product/${encodeURIComponent(number)}.jpg`;
+  const shareImage = `${API_URL}/api/og/product/${encodeURIComponent(productRouteSlug(product))}.jpg`;
   document.title = title;
   setMeta('meta[name="description"]', ["name", "description"], description);
   setMeta('meta[property="og:type"]', ["property", "og:type"], "product");
@@ -49,7 +52,7 @@ export function applyProductSeo(product) {
   document.head.querySelector('#product-jsonld')?.remove();
   const script = document.createElement("script");
   script.id = "product-jsonld"; script.type = "application/ld+json";
-  script.textContent = JSON.stringify({ "@context": "https://schema.org", "@type": "Product", name: `${brand} ${number}`, sku: number, mpn: product.oem || number, brand: { "@type": "Brand", name: brand }, image: product.images || [], description, additionalProperty: related.map(value => ({ "@type": "PropertyValue", name: "Крос-номер / OEM", value })), offers: { "@type": "Offer", url: canonical, priceCurrency: "UAH", price: Number(product.price || 0), availability: Number(product.qty || 0) > 0 ? "https://schema.org/InStock" : "https://schema.org/PreOrder" } });
+  script.textContent = JSON.stringify({ "@context": "https://schema.org", "@type": "Product", name: `${brand} ${number}${condition ? ` — ${condition}` : ""}`, sku: number, mpn: product.oem || number, brand: { "@type": "Brand", name: brand }, image: product.images || [], description, additionalProperty: related.map(value => ({ "@type": "PropertyValue", name: "Крос-номер / OEM", value })), offers: { "@type": "Offer", url: canonical, priceCurrency: "UAH", price: Number(product.price || 0), availability: Number(product.qty || 0) > 0 ? "https://schema.org/InStock" : "https://schema.org/PreOrder" } });
   document.head.appendChild(script);
 }
 

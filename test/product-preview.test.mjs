@@ -33,6 +33,15 @@ test("builds product-specific share metadata and branded image URL", () => {
   assert.match(meta.description, /5WS40536/);
 });
 
+test("uses the condition suffix in canonical and social preview URLs", () => {
+  const restored = buildProductShareMeta({ ...product, condition: "Відновлене" });
+  const classTwo = buildProductShareMeta({ ...product, condition: "Відновлене · Клас 2" });
+  assert.equal(restored.canonical, "https://dieselhub.com.ua/product/166008052R-R");
+  assert.equal(restored.image, "https://diesel-api.onrender.com/api/og/product/166008052R-R.jpg");
+  assert.equal(classTwo.canonical, "https://dieselhub.com.ua/product/166008052R-R2");
+  assert.equal(classTwo.image, "https://diesel-api.onrender.com/api/og/product/166008052R-R2.jpg");
+});
+
 test("renders complete Open Graph and Twitter metadata safely", () => {
   const html = renderProductShareHtml({ ...product, manufacturer: 'Continental <script>alert("x")</script>' });
   assert.match(html, /property="og:image:width" content="1200"/);

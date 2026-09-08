@@ -5,10 +5,10 @@ import multer from "multer";
 import crypto from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { buildTelegramOrderMessage } from "./lib/telegram-order.mjs";
+import { findProductForRoute, parseProductRouteSlug, productRoutePath } from "./lib/product-route.mjs";
 import {
   buildProductOgSvg,
   buildProductShareMeta,
-  normalizeProductNumber,
   renderProductOgJpeg,
   renderProductShareHtml,
 } from "./lib/product-preview.mjs";
@@ -101,14 +101,15 @@ const PUBLIC_PRODUCT_FIELDS = "id,number,oem,cross,compat_for,manufacturer,condi
 const productOgCache = new Map();
 
 async function findPublicProduct(rawNumber) {
-  const number = normalizeProductNumber(String(rawNumber || "").replace(/\.jpg$/i, ""));
+  const { number } = parseProductRouteSlug(rawNumber);
   if (!number) return null;
-  const exact = await supaAdmin.from("products").select(PUBLIC_PRODUCT_FIELDS).eq("number", number).order("id", { ascending: true }).limit(1).maybeSingle();
+  const exact = await supaAdmin.from("products").select(PUBLIC_PRODUCT_FIELDS).eq("number", number).order("id", { ascending: true }).limit(10);
   if (exact.error) throw exact.error;
-  if (exact.data) return exact.data;
-  const insensitive = await supaAdmin.from("products").select(PUBLIC_PRODUCT_FIELDS).ilike("number", number).order("id", { ascending: true }).limit(1).maybeSingle();
+  const exactMatch = findProductForRoute(exact.data || [], rawNumber, { matchRelated: false });
+  if (exactMatch) return exactMatch;
+  const insensitive = await supaAdmin.from("products").select(PUBLIC_PRODUCT_FIELDS).ilike("number", number).order("id", { ascending: true }).limit(10);
   if (insensitive.error) throw insensitive.error;
-  return insensitive.data || null;
+  return findProductForRoute(insensitive.data || [], rawNumber, { matchRelated: false });
 }
 
 async function buildProductOgImage(product) {
@@ -228,10 +229,10 @@ app.get("/share/product/:number", async (req, res) => {
 
 app.get(["/sitemap.xml", "/api/sitemap.xml"], async (_req, res) => {
   try {
-    const { data, error } = await supaAdmin.from("products").select("number").not("number", "is", null).order("id", { ascending: true });
+    const { data, error } = await supaAdmin.from("products").select("number,condition").not("number", "is", null).order("id", { ascending: true });
     if (error) throw error;
     const escapeXml = (value) => String(value).replace(/[<>&'\"]/g, char => ({ "<":"&lt;", ">":"&gt;", "&":"&amp;", "'":"&apos;", '"':"&quot;" }[char]));
-    const urls = ["https://dieselhub.com.ua/", ...(data || []).map(product => `https://dieselhub.com.ua/product/${encodeURIComponent(String(product.number).trim())}`)];
+    const urls = [...new Set(["https://dieselhub.com.ua/", ...(data || []).map(product => `https://dieselhub.com.ua${productRoutePath(product)}`)])];
     res.type("application/xml").send(`<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${urls.map(url => `\n  <url><loc>${escapeXml(url)}</loc></url>`).join("")}\n</urlset>`);
   } catch (error) { res.status(500).type("text/plain").send("sitemap unavailable"); }
 });
