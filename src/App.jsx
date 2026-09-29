@@ -6,8 +6,11 @@ import { captureAttribution, trackEvent, trackSearch } from "./analytics.js";
 import { getPaginationItems } from "./pagination.js";
 import { applyProductSeo, productPath, resetSeo } from "./seo.js";
 
-/** БАЗОВЫЙ URL API (пусто в dev, на проде через VITE_API_BASE) */
-const API = import.meta.env.VITE_API_BASE || "";
+/** В dev используем proxy Vite, а production не должен зависеть от локального .env. */
+const API = (
+  import.meta.env.VITE_API_BASE ||
+  (import.meta.env.PROD ? "https://diesel-api.onrender.com" : "")
+).replace(/\/$/, "");
 const KROP_SITE_URL = "https://www.kropdieselhub.com/";
 const LEGACY_COPPER_WASHER_ID = "cart-addon-copper-washer";
 const COPPER_WASHER_PREFIX = "cart-addon-copper-washer:";

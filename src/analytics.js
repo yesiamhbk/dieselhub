@@ -1,4 +1,7 @@
-const API = import.meta.env?.VITE_API_BASE || "";
+const API = (
+  import.meta.env?.VITE_API_BASE ||
+  (import.meta.env?.PROD ? "https://diesel-api.onrender.com" : "")
+).replace(/\/$/, "");
 const STORAGE_KEY = "dh_attribution_v1";
 const SESSION_KEY = "dh_session_id";
 

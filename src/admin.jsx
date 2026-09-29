@@ -6,7 +6,10 @@ import { productAvailabilityForQty } from "../lib/product-availability.mjs";
 
 // Базовый URL API для продакшна (например, https://diesel-api.onrender.com)
 // ЛОКАЛЬНО можно оставить пустым (тогда будут ходить на /api через прокси Vite)
-const API = import.meta.env.VITE_API_BASE || "";
+const API = (
+  import.meta.env.VITE_API_BASE ||
+  (import.meta.env.PROD ? "https://diesel-api.onrender.com" : "")
+).replace(/\/$/, "");
 const IS_LOCAL_DEV = import.meta.env.DEV;
 const LOCAL_ADMIN_TOKEN = "local-only-placeholder";
 
@@ -111,8 +114,7 @@ export default function AdminPanel() {
     }
     (async () => {
       try {
-        const base = import.meta.env.VITE_API_BASE || "";
-        const r = await fetch(base + "/api/admin/allow-ip");
+        const r = await fetch(API + "/api/admin/allow-ip");
         const j = await r.json();
         setIpAllowed(!!j.allowed);
       } catch (e) { setIpAllowed(false); }
