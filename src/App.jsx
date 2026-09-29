@@ -1,5 +1,6 @@
 // src/App.jsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { productAvailabilityForQty } from "../lib/product-availability.mjs";
 import { findProductForRoute } from "../lib/product-route.mjs";
 import { captureAttribution, trackEvent, trackSearch } from "./analytics.js";
 import { getPaginationItems } from "./pagination.js";
@@ -72,11 +73,7 @@ function normalizePartNumber(value) {
 
 // Ефективна наявність з урахуванням кількості
 function effectiveAvailability(p) {
-  const raw = (p && typeof p.availability === "string") ? p.availability : "";
-  const qty = Number(p && p.qty) || 0;
-  // Якщо заявлено "В наявності" і є штучний залишок >0 — показуємо "В наявності"
-  // В усіх інших випадках — "Під замовлення"
-  return (raw === "В наявності" && qty > 0) ? "В наявності" : "Під замовлення";
+  return productAvailabilityForQty(p?.qty);
 }
 
 function ProductCrosses({ items = [], highlight = "" }) {

@@ -5,6 +5,7 @@ import multer from "multer";
 import crypto from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { buildTelegramOrderMessage } from "./lib/telegram-order.mjs";
+import { productAvailabilityForQty, withDerivedProductAvailability } from "./lib/product-availability.mjs";
 import { findProductForRoute, parseProductRouteSlug, productRoutePath } from "./lib/product-route.mjs";
 import {
   buildProductOgSvg,
@@ -106,10 +107,10 @@ async function findPublicProduct(rawNumber) {
   const exact = await supaAdmin.from("products").select(PUBLIC_PRODUCT_FIELDS).eq("number", number).order("id", { ascending: true }).limit(10);
   if (exact.error) throw exact.error;
   const exactMatch = findProductForRoute(exact.data || [], rawNumber, { matchRelated: false });
-  if (exactMatch) return exactMatch;
+  if (exactMatch) return withDerivedProductAvailability(exactMatch);
   const insensitive = await supaAdmin.from("products").select(PUBLIC_PRODUCT_FIELDS).ilike("number", number).order("id", { ascending: true }).limit(10);
   if (insensitive.error) throw insensitive.error;
-  return findProductForRoute(insensitive.data || [], rawNumber, { matchRelated: false });
+  return withDerivedProductAvailability(findProductForRoute(insensitive.data || [], rawNumber, { matchRelated: false }));
 }
 
 async function buildProductOgImage(product) {
@@ -170,7 +171,7 @@ app.get("/api/products", async (_req, res) => {
       .select(PUBLIC_PRODUCT_FIELDS)
       .order("id", { ascending: true });
     if (error) throw error;
-    res.json(data || []);
+    res.json((data || []).map(withDerivedProductAvailability));
   } catch (e) {
     console.error("[/api/products] error:", e);
     res.status(500).json({ error: String(e.message || e) });
@@ -297,7 +298,7 @@ app.post("/api/admin/product", requireAdmin, async (req, res) => {
     payload.qty = qty;
     payload.price = price;
     payload.engine = engine;
-    payload.availability = qty > 0 ? "В наявності" : "Під замовлення";
+    payload.availability = productAvailabilityForQty(qty);
     const { data, error } = await supaAdmin
       .from("products")
       .upsert(payload)
@@ -316,7 +317,7 @@ app.patch("/api/admin/product/:id", requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const src = req.body || {};
-    const allowed = ["price","qty","availability","number","oem","cross","compat_for","manufacturer","condition","type","engine","images","sort_order","pinned"];
+    const allowed = ["price","qty","number","oem","cross","compat_for","manufacturer","condition","type","engine","images","sort_order","pinned"];
     const patch = {};
     for (const k of allowed) if (k in src && src[k] !== undefined) patch[k] = src[k];
     if (Object.keys(patch).length === 0) return res.json({ ok: true });
@@ -324,7 +325,7 @@ app.patch("/api/admin/product/:id", requireAdmin, async (req, res) => {
       const qty = patch.qty === "" || patch.qty == null ? 0 : Number(patch.qty);
       if (!Number.isInteger(qty) || qty < 0) return res.status(400).json({ error: "invalid_qty" });
       patch.qty = qty;
-      if (!("availability" in patch)) patch.availability = qty > 0 ? "В наявності" : "Під замовлення";
+      patch.availability = productAvailabilityForQty(qty);
     }
     if ("price" in patch) {
       const price = patch.price === "" || patch.price == null ? 0 : Number(patch.price);
@@ -774,9 +775,9 @@ function csvStringify(rows){
   const out=[header.join(",")]; for(const r of rows) out.push(header.map(k=>esc(r[k])).join(",")); return out.join("\n");
 }
 async function fetchAllProducts(){ const {data,error}=await supaAdmin.from("products").select("id,number,oem,cross,compat_for,manufacturer,condition,type,availability,qty,price,engine,images,sort_order,pinned").order("id",{ascending:true}); if(error) throw error; return data||[]; }
-function shapeForExport(p){ return { id:p.id??"", number:p.number??"", oem:p.oem??"", cross:Array.isArray(p.cross)?p.cross.join("|"):"", manufacturer:p.manufacturer??"", condition:p.condition??"", type:p.type??"", engine:p.engine??"", availability:p.availability??"", qty:p.qty??0, price:p.price??0, images:Array.isArray(p.images)?p.images.join("|"):"" }; }
+function shapeForExport(p){ return { id:p.id??"", number:p.number??"", oem:p.oem??"", cross:Array.isArray(p.cross)?p.cross.join("|"):"", manufacturer:p.manufacturer??"", condition:p.condition??"", type:p.type??"", engine:p.engine??"", availability:productAvailabilityForQty(p.qty), qty:p.qty??0, price:p.price??0, images:Array.isArray(p.images)?p.images.join("|"):"" }; }
 const ALLOWED_CONDITIONS=new Set(["Нове","Відновлене"]); const ALLOWED_TYPES=new Set(["Форсунка","ТНВД","Клапан"]); const ALLOWED_AVAIL=new Set(["В наявності","Під замовлення"]);
-function shapeIncoming(o){ const out={ id:o.id??null, number:(o.number??"").trim(), oem:(o.oem??"").trim(), cross:Array.isArray(o.cross)?o.cross:String(o.cross||"").split("|").map(s=>s.trim()).filter(Boolean), manufacturer:(o.manufacturer??"").trim(), condition:(o.condition??"").trim(), type:(o.type??"").trim(), engine:(o.engine===""||o.engine==null)?null:Number(o.engine), availability:(o.availability??"").trim(), qty:(o.qty===""||o.qty==null)?0:parseInt(o.qty,10), price:(o.price===""||o.price==null)?0:Number(o.price), images:Array.isArray(o.images)?o.images:String(o.images||"").split("|").map(s=>s.trim()).filter(Boolean)}; if(!Number.isFinite(out.engine)) out.engine=null; if(!Number.isFinite(out.price)) out.price=0; if(!Number.isInteger(out.qty)||out.qty<0) out.qty=0; return out; }
+function shapeIncoming(o){ const out={ id:o.id??null, number:(o.number??"").trim(), oem:(o.oem??"").trim(), cross:Array.isArray(o.cross)?o.cross:String(o.cross||"").split("|").map(s=>s.trim()).filter(Boolean), manufacturer:(o.manufacturer??"").trim(), condition:(o.condition??"").trim(), type:(o.type??"").trim(), engine:(o.engine===""||o.engine==null)?null:Number(o.engine), qty:(o.qty===""||o.qty==null)?0:parseInt(o.qty,10), price:(o.price===""||o.price==null)?0:Number(o.price), images:Array.isArray(o.images)?o.images:String(o.images||"").split("|").map(s=>s.trim()).filter(Boolean)}; if(!Number.isFinite(out.engine)) out.engine=null; if(!Number.isFinite(out.price)) out.price=0; if(!Number.isInteger(out.qty)||out.qty<0) out.qty=0; out.availability=productAvailabilityForQty(out.qty); return out; }
 function validateItem(item){ const errors=[]; if(!item.number&&!item.oem) errors.push("должен быть number или oem"); if(item.condition&&!ALLOWED_CONDITIONS.has(item.condition)) errors.push("condition должен быть 'Нове' или 'Відновлене'"); if(item.type&&!ALLOWED_TYPES.has(item.type)) errors.push("type должен быть 'Форсунка' | 'ТНВД' | 'Клапан'"); if(item.availability&&!ALLOWED_AVAIL.has(item.availability)) errors.push("availability должен быть 'В наявності' | 'Під замовлення'"); if(item.price<0) errors.push("price не может быть отрицательным"); if(item.qty<0) errors.push("qty не может быть отрицательным"); return errors; }
 async function findExistingId(item){ if(item.id) return item.id; const keys=[]; if(item.number) keys.push(normalizeKey(item.number)); if(item.oem) keys.push(normalizeKey(item.oem)); if(!keys.length) return null; const or=keys.map(k=>`number.ilike.%${k}%`).concat(keys.map(k=>`oem.ilike.%${k}%`)).join(","); const {data,error}=await supaAdmin.from("products").select("id,number,oem").or(or).limit(50); if(error||!data||!data.length) return null; for(const p of data){ if((p.number&&normalizeKey(p.number)===normalizeKey(item.number))||(p.oem&&normalizeKey(p.oem)===normalizeKey(item.oem))) return p.id; } return data[0].id; }
 
@@ -877,7 +878,10 @@ app.post("/api/inventory/sync", async (req, res) => {
       // update qty
       const before = Number(data.qty || 0);
       const after = qty;
-      const up = await supaAdmin.from("products").update({ qty: after }).eq("id", data.id);
+      const up = await supaAdmin.from("products").update({
+        qty: after,
+        availability: productAvailabilityForQty(after),
+      }).eq("id", data.id);
       if (up.error) continue;
 
       // log movement if table exists

@@ -1,5 +1,6 @@
 // src/admin.jsx
 import React, { useEffect, useMemo, useState } from "react";
+import { productAvailabilityForQty } from "../lib/product-availability.mjs";
 
 
 
@@ -96,7 +97,7 @@ function createEmptyProductForm() {
 }
 
 function availabilityForQty(value) {
-  return Number(value) > 0 ? AVAILABILITIES[0] : AVAILABILITIES[1];
+  return productAvailabilityForQty(value);
 }
 
 /* ===== страница ===== */
@@ -839,7 +840,7 @@ export default function AdminPanel() {
         manufacturer: r.manufacturer || "",
         condition: r.condition || "",
         type: r.type || "",
-        availability: r.availability || "",
+        availability: availabilityForQty(r.qty),
         qty: Number(r.qty) || 0,
         price: Number(r.price) || 0,
         engine: (r.engine === "" || r.engine == null) ? null : Number(r.engine),
@@ -1167,7 +1168,6 @@ export default function AdminPanel() {
                         if (patch.manufacturer !== undefined) norm.manufacturer = patch.manufacturer;
                         if (patch.condition !== undefined) norm.condition = patch.condition;
                         if (patch.type !== undefined) norm.type = patch.type;
-                        if (patch.availability !== undefined) norm.availability = patch.availability;
                         if (patch.qty !== undefined) {
                           const n = Number(patch.qty);
                           norm.qty = isNaN(n) ? 0 : Math.max(0, n);
@@ -1294,15 +1294,9 @@ export default function AdminPanel() {
                         ) : (p.type || '—')}
                       </td>
                       <td className="px-3 py-2 text-center">
-                        {editAll ? (
-                          <select
-                            value={v('availability', p.availability || AVAILABILITIES[0])}
-                            onChange={(e)=>setDraftField(p.id, 'availability', e.target.value)}
-                            className="w-full bg-neutral-900 border border-neutral-800 rounded-lg px-2 py-1 outline-none"
-                          >
-                            {AVAILABILITIES.map(m => <option key={m} value={m}>{m}</option>)}
-                          </select>
-                        ) : (p.availability || '—')}
+                        <span title="Статус визначається автоматично за кількістю">
+                          {availabilityForQty(v('qty', p.qty ?? 0))}
+                        </span>
                       </td>
                       <td className="px-3 py-2 text-center">
                         {editAll ? (
@@ -1432,12 +1426,12 @@ export default function AdminPanel() {
                         {CONDITIONS.map(c => <option key={c} value={c}>{c}</option>)}
                       </select>
                     </label>
-                    <label className="block">
+                    <div className="block">
                       <div className="text-sm mb-1">Наявність</div>
-                      <select value={productEdit.availability || ''} onChange={(e)=>setProductEdit(s=>({ ...s, availability:e.target.value }))} className="w-full rounded-lg bg-neutral-900 border border-neutral-800 px-3 py-2 text-sm outline-none focus:border-[#34B7B7]">
-                        {AVAILABILITIES.map(a => <option key={a} value={a}>{a}</option>)}
-                      </select>
-                    </label>
+                      <div className="w-full rounded-lg bg-neutral-900 border border-neutral-800 px-3 py-2 text-sm text-neutral-200" title="Статус визначається автоматично за кількістю">
+                        {availabilityForQty(productEdit.qty)}
+                      </div>
+                    </div>
                   </div>
                   <div className="grid grid-cols-3 gap-3">
                     <Input label="Кількість (шт)" value={productEdit.qty ?? ''} onChange={(e)=>setProductEdit(s=>({ ...s, qty:e.target.value }))}/>

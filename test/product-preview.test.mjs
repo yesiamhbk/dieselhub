@@ -42,6 +42,11 @@ test("uses the condition suffix in canonical and social preview URLs", () => {
   assert.equal(classTwo.image, "https://diesel-api.onrender.com/api/og/product/166008052R-R2.jpg");
 });
 
+test("ignores a stale availability field and trusts the quantity", () => {
+  const meta = buildProductShareMeta({ ...product, qty: 2, availability: "Під замовлення" });
+  assert.match(meta.description, /В наявності · 2 шт/);
+});
+
 test("renders complete Open Graph and Twitter metadata safely", () => {
   const html = renderProductShareHtml({ ...product, manufacturer: 'Continental <script>alert("x")</script>' });
   assert.match(html, /property="og:image:width" content="1200"/);
